@@ -30,5 +30,5 @@ jobs:
 
       - name: Upload SQLite DB to S3
         run: |
-          aws s3 cp mydatabase.db s3://${{ secrets.S3_BUCKET_NAME }}/mydatabase.db
+          aws s3 cp mystocks.db s3://${{ secrets.S3_BUCKET_NAME }}/mystocks.db
           echo "Database uploaded successfully!"
