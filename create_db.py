@@ -5,10 +5,7 @@ import sqlite3
 # Create and connect to SQLite DB
 
 conn = sqlite3.connect("mystocks.db")
-
 cursor = conn.cursor()
-
-
 
 # Create a sample table
 
