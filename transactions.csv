@@ -1,0 +1,3 @@
+id,stock_symbol,type,quantity,price,total_amount,transaction_date,transaction_month_str,notes
+1,0700.HK,SELL,200,489.4,97880,3/8/2026 10:30,2026-08,Sold
+2,9988.HK,SELL,500,128.2,64100,5/8/2026 10:30,2026-08,Sold

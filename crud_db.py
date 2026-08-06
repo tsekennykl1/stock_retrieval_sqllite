@@ -1,0 +1,897 @@
+import sqlite3
+from datetime import datetime, timedelta
+from calendar import monthrange
+
+
+def get_month_str(_date=None):
+    """Convert a transaction date to 'yyyy-mm' format, or use the current date if not provided."""
+    if _date:
+        return _date, datetime.strptime(_date, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m")
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S"), datetime.now().strftime("%Y-%m")
+
+def get_connection():
+    """Establish and return a connection to the SQLite database."""
+    conn = sqlite3.connect("mystocks.db")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+# ══════════════════════════════════════════════════════════════
+#  STOCKS CRUD
+# ══════════════════════════════════════════════════════════════
+
+def insert_stock(symbol, name, sector=None, currency='HKD'):
+    """Insert a new stock into the stocks table."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO stocks (symbol, name, sector, currency)
+            VALUES (?, ?, ?, ?)
+        """, (symbol.upper(), name, sector, currency))
+        conn.commit()
+        print(f"✅ Stock '{symbol.upper()}' inserted successfully!")
+        return symbol.upper()
+    except sqlite3.IntegrityError:
+        print(f"⚠️  Stock '{symbol.upper()}' already exists!")
+        return None
+    finally:
+        conn.close()
+
+# ...existing code...
+# ══════════════════════════════════════════════════════════════
+#  PORTFOLIO CRUD
+# ══════════════════════════════════════════════════════════════
+def insert_portfolio(symbol, quantity, avg_buy_price, trading_date, transaction_reference_id=None):
+    """Add a stock holding to the portfolio with an optional transaction reference ID."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO portfolio (stock_symbol, quantity, avg_buy_price, trading_date, transaction_reference_id)
+            VALUES (?, ?, ?, ?, ?)
+        """, (symbol.upper(), quantity, avg_buy_price, trading_date, transaction_reference_id))
+        conn.commit()
+        print(f"✅ Portfolio entry for '{symbol.upper()}' added!")
+    except sqlite3.IntegrityError:
+        print(f"⚠️  Stock '{symbol.upper()}' not found in stocks table (or already exists)!")
+    finally:
+        conn.close()
+
+def update_portfolio(portfolio_id, quantity=None, avg_buy_price=None, trading_date=None, transaction_reference_id=None):
+    """Update portfolio holding for a stock with an optional transaction reference ID."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    fields, values = [], []
+    if quantity is not None:      
+        fields.append("quantity = ?")
+        values.append(quantity)
+    if avg_buy_price is not None: 
+        fields.append("avg_buy_price = ?")
+        values.append(avg_buy_price)
+    if trading_date is not None:
+        fields.append("trading_date = ?")
+        values.append(trading_date)
+    if transaction_reference_id is not None:
+        fields.append("transaction_reference_id = ?")
+        values.append(transaction_reference_id)
+    
+    if not fields:
+        print("⚠️  No fields to update!")
+        return
+        
+    fields.append("updated_at = CURRENT_TIMESTAMP")
+    values.append(portfolio_id)
+    
+    cursor.execute(f"UPDATE portfolio SET {', '.join(fields)} WHERE id = ?", values)
+    if cursor.rowcount == 0:
+        print(f"⚠️  Portfolio entry with ID '{portfolio_id}' not found!")
+    else:
+        print(f"✅ Portfolio entry with ID '{portfolio_id}' updated!")
+    conn.commit()
+    conn.close()
+
+def update_portfolio(portfolio_id, quantity=None, avg_buy_price=None, trading_date=None, transaction_reference_id=None):
+    """Update portfolio holding for a stock."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    fields, values = [], []
+    if quantity is not None:      
+        fields.append("quantity = ?")
+        values.append(quantity)
+    if avg_buy_price is not None: 
+        fields.append("avg_buy_price = ?")
+        values.append(avg_buy_price)
+    if trading_date is not None:
+        fields.append("trading_date = ?")
+        values.append(trading_date)
+    if transaction_reference_id is not None:
+        fields.append("transaction_reference_id = ?")
+        values.append(transaction_reference_id)
+    
+    if not fields:
+        print("⚠️  No fields to update!")
+        return
+        
+    fields.append("updated_at = CURRENT_TIMESTAMP")
+    values.append(portfolio_id)
+    
+    cursor.execute(f"UPDATE portfolio SET {', '.join(fields)} WHERE id = ?", values)
+    if cursor.rowcount == 0:
+        print(f"⚠️  Portfolio entry with ID '{portfolio_id}' not found!")
+    else:
+        print(f"✅ Portfolio entry with ID '{portfolio_id}' updated!")
+    conn.commit()
+    conn.close()
+
+def delete_portfolio(portfolio_id):
+    """Remove a stock from the portfolio."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM portfolio WHERE id = ?", (portfolio_id,))
+    conn.commit()
+    print(f"🗑️  Portfolio entry with ID '{portfolio_id}' removed!")
+    conn.close()
+
+def get_portfolio():
+    """Get full portfolio with stock details."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT p.id, s.symbol, s.name, s.sector, p.quantity,
+               p.avg_buy_price, p.trading_date, p.total_invested, p.updated_at
+        FROM portfolio p
+        JOIN stocks s ON p.stock_symbol = s.symbol
+        ORDER BY p.total_invested DESC
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_latest_portfolio():
+    """Get all portfolio symbols with the latest trading_date, stock name, average price, and quantity > 0."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT p.stock_symbol, s.name as stock_name, MAX(p.trading_date) as latest_trading_date,
+               AVG(p.avg_buy_price) as average_price, SUM(p.quantity) as total_quantity
+        FROM portfolio p
+        JOIN stocks s ON p.stock_symbol = s.symbol
+        WHERE p.quantity > 0
+        GROUP BY p.stock_symbol, s.name
+        ORDER BY latest_trading_date DESC
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+# ══════════════════════════════════════════════════════════════
+#  TRANSACTIONS CRUD
+# ══════════════════════════════════════════════════════════════
+
+def insert_transaction(symbol, type, quantity, price, notes=None, transaction_date=None):
+    """Record a BUY or SELL transaction with an optional explicit date."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        # Convert transaction_date to "yyyy-mm" format for transaction_month_str
+        transaction_date, transaction_month_str = get_month_str(transaction_date)
+
+        cursor.execute("""
+            INSERT INTO transactions (stock_symbol, type, quantity, price, notes, transaction_date, transaction_month_str)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (symbol.upper(), type.upper(), quantity, price, notes, transaction_date, transaction_month_str))
+
+        # Get the latest portfolio entry for the stock
+        cursor.execute("""
+            SELECT quantity, avg_buy_price
+            FROM portfolio
+            WHERE stock_symbol = ?
+            ORDER BY trading_date DESC
+            LIMIT 1
+        """, (symbol.upper(),))
+        portfolio_entry = cursor.fetchone()
+
+        if portfolio_entry:
+            current_quantity, current_avg_price = portfolio_entry["quantity"], portfolio_entry["avg_buy_price"]
+
+            # Calculate new quantity and average price based on transaction type
+            if type.upper() == "BUY":
+                new_quantity = current_quantity + quantity
+                new_avg_price = ((current_quantity * current_avg_price) + (quantity * price)) / new_quantity
+            elif type.upper() == "SELL":
+                new_quantity = current_quantity - quantity
+                new_avg_price = current_avg_price  # Average price remains unchanged for SELL
+            else:
+                print(f"⚠️  Invalid transaction type '{type.upper()}'!")
+                return
+
+            # Insert or update the portfolio with the new values
+           
+            cursor.execute("""
+                    INSERT OR REPLACE INTO portfolio (stock_symbol, quantity, avg_buy_price, trading_date)
+                    VALUES (?, ?, ?, ?)
+                """, (symbol.upper(), new_quantity, new_avg_price, transaction_date))
+ 
+        conn.commit()
+        print(f"✅ {type.upper()} transaction for '{symbol.upper()}' recorded!")
+    except sqlite3.IntegrityError:
+        print(f"⚠️  Stock '{symbol.upper()}' not found in stocks table!")
+    finally:
+        conn.close()
+
+def update_transaction(transaction_id, type=None, quantity=None, price=None, notes=None, transaction_date=None):
+    """Update an existing transaction entry."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    fields, values = [], []
+    
+    if type is not None:
+        fields.append("type = ?")
+        values.append(type.upper())
+    if quantity is not None:
+        fields.append("quantity = ?")
+        values.append(quantity)
+    if price is not None:
+        fields.append("price = ?")
+        values.append(price)
+    if notes is not None:
+        fields.append("notes = ?")
+        values.append(notes)
+    if transaction_date is not None:
+        transaction_date , transaction_month_str = get_month_str(transaction_date)
+        fields.append("transaction_date = ?")
+        values.append(transaction_date)
+        fields.append("transaction_month_str = ?")
+        values.append(transaction_month_str)
+        
+    if not fields:
+        print("⚠️  No fields to update!")
+        return
+        
+    values.append(transaction_id)
+    cursor.execute(f"""
+        UPDATE transactions
+        SET {', '.join(fields)}
+        WHERE id = ?
+    """, values)
+    
+    if cursor.rowcount == 0:
+        print(f"⚠️  Transaction entry with ID '{transaction_id}' not found!")
+    else:
+        print(f"✅ Transaction entry with ID '{transaction_id}' updated!")
+        
+    conn.commit()
+    conn.close()
+
+def delete_transaction(transaction_id):
+    """Delete a transaction by ID."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM transactions WHERE id = ?", (transaction_id,))
+    conn.commit()
+    if cursor.rowcount == 0:
+        print(f"⚠️  Transaction ID {transaction_id} not found!")
+    else:
+        print(f"🗑️  Transaction ID {transaction_id} deleted!")
+    conn.close()
+
+def get_transactions(year_month, symbol=None):
+    """Get all transactions, filtered by month (YYYY-MM) and optionally by symbol."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    query = """
+        SELECT t.id, t.stock_symbol as symbol, t.type, t.quantity, t.price,
+               t.total_amount, t.transaction_date, t.transaction_month_str, t.notes
+        FROM transactions t
+        WHERE t.transaction_month_str = ?
+    """
+    params = [year_month]
+    if symbol:
+        query += " AND t.stock_symbol = ?"
+        params.append(symbol.upper())
+        
+    query += " ORDER BY t.transaction_date DESC"
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+# ══════════════════════════════════════════════════════════════
+#  WATCHLIST CRUD
+# ══════════════════════════════════════════════════════════════
+
+def insert_watchlist(symbol, target_price=None, notes=None):
+    """Add a stock to the watchlist."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT OR IGNORE INTO watchlist (stock_symbol, target_price, notes)
+            VALUES (?, ?, ?)
+        """, (symbol.upper(), target_price, notes))
+        conn.commit()
+        print(f"✅ '{symbol.upper()}' added to watchlist!")
+    except sqlite3.IntegrityError:
+        print(f"⚠️  Stock '{symbol.upper()}' not found in stocks table!")
+    finally:
+        conn.close()
+
+def update_watchlist(symbol, target_price=None, notes=None):
+    """Update an existing watchlist entry."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    fields, values = [], []
+    
+    if target_price is not None:
+        fields.append("target_price = ?")
+        values.append(target_price)
+    if notes is not None:
+        fields.append("notes = ?")
+        values.append(notes)
+        
+    if not fields:
+        print("⚠️  No fields to update!")
+        return
+        
+    values.append(symbol.upper())
+    cursor.execute(f"""
+        UPDATE watchlist
+        SET {', '.join(fields)}
+        WHERE stock_symbol = ?
+    """, values)
+    
+    if cursor.rowcount == 0:
+        print(f"⚠️  Watchlist entry for '{symbol.upper()}' not found!")
+    else:
+        print(f"✅ Watchlist entry for '{symbol.upper()}' updated!")
+        
+    conn.commit()
+    conn.close()
+
+def delete_watchlist(symbol):
+    """Remove a stock from the watchlist."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM watchlist WHERE stock_symbol = ?", (symbol.upper(),))
+    conn.commit()
+    print(f"🗑️  '{symbol.upper()}' removed from watchlist!")
+    conn.close()
+
+def get_watchlist():
+    """Get all watchlist entries."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT s.symbol, s.name, w.target_price, w.notes, w.added_at
+        FROM watchlist w
+        JOIN stocks s ON w.stock_symbol = s.symbol
+        ORDER BY w.added_at DESC
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+# ══════════════════════════════════════════════════════════════
+#  DIVIDENDS CRUD
+# ══════════════════════════════════════════════════════════════
+
+def insert_dividend(symbol, amount_per_share, quantity, payment_date):
+    """Record a dividend payment."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        payment_date,payment_month_str = get_month_str(payment_date)
+        
+        cursor.execute("""
+            INSERT INTO dividends (stock_symbol, amount_per_share, quantity, payment_date, payment_month_str)
+            VALUES (?, ?, ?, ?, ?)
+        """, (symbol.upper(), amount_per_share, quantity, payment_date, payment_month_str))
+        conn.commit()
+        print(f"✅ Dividend for '{symbol.upper()}' recorded!")
+    except sqlite3.IntegrityError:
+        print(f"⚠️  Stock '{symbol.upper()}' not found in stocks table!")
+    finally:
+        conn.close()
+
+def get_dividends(symbol=None, year_month=None):
+    """Get all dividends, optionally filtered by symbol and/or month (YYYY-MM)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    query = """
+        SELECT id, stock_symbol as symbol, amount_per_share, quantity,
+               total_dividend, payment_date, payment_month_str
+        FROM dividends
+        WHERE 1=1
+    """
+    params = []
+    
+    if symbol:
+        query += " AND stock_symbol = ?"
+        params.append(symbol.upper())
+    
+    if year_month:
+        query += " AND payment_month_str = ?"
+        params.append(year_month)
+        
+    query += " ORDER BY payment_date DESC"
+    
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def update_dividend(dividend_id, amount_per_share=None, quantity=None, payment_date=None):
+    """Update an existing dividend entry."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    fields, values = [], []
+    if amount_per_share is not None:
+        fields.append("amount_per_share = ?")
+        values.append(amount_per_share)
+    if quantity is not None:
+        fields.append("quantity = ?")
+        values.append(quantity)
+    if payment_date is not None:
+        fields.append("payment_date = ?")
+        values.append(payment_date)
+        # Update payment_month_str based on the new payment_date
+        payment_month_str = datetime.strptime(payment_date, "%Y-%m-%d").strftime("%Y-%m")
+        fields.append("payment_month_str = ?")
+        values.append(payment_month_str)
+        
+    if not fields:
+        print("⚠️  No fields to update!")
+        return
+        
+    values.append(dividend_id)
+    cursor.execute(f"""
+        UPDATE dividends
+        SET {', '.join(fields)}
+        WHERE id = ?
+    """, values)
+    if cursor.rowcount == 0:
+        print(f"⚠️  Dividend entry with ID '{dividend_id}' not found!")
+    else:
+        print(f"✅ Dividend entry with ID '{dividend_id}' updated!")
+    conn.commit()
+    conn.close()
+
+def delete_dividend(dividend_id):
+    """Delete a dividend entry by ID."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM dividends WHERE id = ?", (dividend_id,))
+    conn.commit()
+    if cursor.rowcount == 0:
+        print(f"⚠️  Dividend entry with ID '{dividend_id}' not found!")
+    else:
+        print(f"🗑️  Dividend entry with ID '{dividend_id}' deleted!")
+    conn.close()
+
+# ══════════════════════════════════════════════════════════════
+#  MONTHLY SNAPSHOTS CRUD
+# ══════════════════════════════════════════════════════════════
+
+def insert_monthly_snapshot(year_month, stock_symbol, start_quantity, start_price):
+    """Insert or update a monthly starting position."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT OR REPLACE INTO monthly_snapshots (year_month, stock_symbol, start_quantity, start_price)
+        VALUES (?, ?, ?, ?)
+    """, (year_month, stock_symbol.upper(), start_quantity, start_price))
+    conn.commit()
+    conn.close()
+
+
+def get_monthly_snapshots(year_month=None, stock_symbol=None):
+    """Get snapshots, optionally filtered by month and/or symbol."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    query = """
+        SELECT id, year_month, stock_symbol, start_quantity, start_price
+        FROM monthly_snapshots
+        WHERE 1=1
+    """
+    params = []
+    
+    if year_month:
+        query += " AND year_month = ?"
+        params.append(year_month)
+    if stock_symbol:
+        query += " AND stock_symbol = ?"
+        params.append(stock_symbol.upper())
+        
+    query += " ORDER BY year_month DESC"
+    
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def update_monthly_snapshot(year_month, stock_symbol, start_quantity=None, start_price=None):
+    """Update an existing monthly snapshot."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    fields, values = [], []
+    if start_quantity is not None:
+        fields.append("start_quantity = ?")
+        values.append(start_quantity)
+    if start_price is not None:
+        fields.append("start_price = ?")
+        values.append(start_price)
+        
+    if not fields:
+        print("⚠️  No fields to update!")
+        return
+        
+    values.extend([year_month, stock_symbol.upper()])
+    cursor.execute(f"""
+        UPDATE monthly_snapshots
+        SET {', '.join(fields)}
+        WHERE year_month = ? AND stock_symbol = ?
+    """, values)
+    if cursor.rowcount == 0:
+        print(f"⚠️  Snapshot for '{stock_symbol.upper()}' in '{year_month}' not found!")
+    else:
+        print(f"✅ Snapshot for '{stock_symbol.upper()}' in '{year_month}' updated!")
+    conn.commit()
+    conn.close()
+
+def delete_monthly_snapshot(year_month, stock_symbol):
+    """Delete a monthly snapshot."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        DELETE FROM monthly_snapshots
+        WHERE year_month = ? AND stock_symbol = ?
+    """, (year_month, stock_symbol.upper()))
+    conn.commit()
+    if cursor.rowcount == 0:
+        print(f"⚠️  Snapshot for '{stock_symbol.upper()}' in '{year_month}' not found!")
+    else:
+        print(f"🗑️  Snapshot for '{stock_symbol.upper()}' in '{year_month}' deleted!")
+    conn.close()
+
+# ══════════════════════════════════════════════════════════════
+#  MONTHLY PNL CRUD
+# ══════════════════════════════════════════════════════════════
+
+def insert_monthly_pnl(year_month, open_bal, income, expenses, stock_pnl, dividend):
+
+    if not (year_month is None or 0):
+        """Insert or update a monthly PnL entry."""
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO monthly_pnl (
+                year_month, open_bal, income, expenses, stock_pnl, dividend
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (year_month, open_bal, income, expenses, stock_pnl, dividend))
+        conn.commit()
+        conn.close()
+
+def get_monthly_pnl(year_month=None):
+    """Get all monthly PnL entries, optionally filtered by year_month."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    query = """
+        SELECT year_month, open_bal, income, expenses, stock_pnl, dividend, monthly_gl, close_bal
+        FROM monthly_pnl
+        WHERE 1=1
+    """
+    params = []
+    
+    if year_month:
+        query += " AND year_month = ?"
+        params.append(year_month)
+        
+    query += " ORDER BY year_month DESC"
+    
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def update_monthly_pnl(year_month, open_bal=None, income=None, expenses=None, stock_pnl=None, dividend=None):
+    """Update an existing monthly PnL entry."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    fields, values = [], []
+    if open_bal is not None:
+        fields.append("open_bal = ?")
+        values.append(open_bal)
+    if income is not None:
+        fields.append("income = ?")
+        values.append(income)
+    if expenses is not None:
+        fields.append("expenses = ?")
+        values.append(expenses)
+    if stock_pnl is not None:
+        fields.append("stock_pnl = ?")
+        values.append(stock_pnl)
+    if dividend is not None:
+        fields.append("dividend = ?")
+        values.append(dividend)
+        
+    if not fields:
+        print("⚠️  No fields to update!")
+        return
+        
+    values.append(year_month)
+    cursor.execute(f"""
+        UPDATE monthly_pnl
+        SET {', '.join(fields)}
+        WHERE year_month = ?
+    """, values)
+    if cursor.rowcount == 0:
+        print(f"⚠️  PnL entry for '{year_month}' not found!")
+    else:
+        print(f"✅ PnL entry for '{year_month}' updated!")
+    conn.commit()
+    conn.close()
+
+def delete_monthly_pnl(year_month):
+    """Delete a monthly PnL entry."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        DELETE FROM monthly_pnl
+        WHERE year_month = ?
+    """, (year_month,))
+    conn.commit()
+    if cursor.rowcount == 0:
+        print(f"⚠️  PnL entry for '{year_month}' not found!")
+    else:
+        print(f"🗑️  PnL entry for '{year_month}' deleted!")
+    conn.close()
+
+# ══════════════════════════════════════════════════════════════
+#  MORTGAGE CRUD
+# ══════════════════════════════════════════════════════════════
+
+def insert_mortgage_monthly(year_month, principal, interest, remaining_balance):
+    """Insert or update a mortgage monthly entry."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT OR REPLACE INTO mortgage (year_month, principal, interest, remaining_balance)
+        VALUES (?, ?, ?, ?)
+    """, (year_month, principal, interest, remaining_balance))
+    conn.commit()
+    print(f"✅ Mortgage monthly entry for '{year_month}' added!")
+    conn.close()
+
+def get_mortgage_monthly(year_month=None):
+    """Get all mortgage monthly entries, optionally filtered by year_month."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    query = """
+        SELECT year_month, principal, interest, total_payment, remaining_balance
+        FROM mortgage
+        WHERE 1=1
+    """
+    params = []
+    
+    if year_month:
+        query += " AND year_month = ?"
+        params.append(year_month)
+        
+    query += " ORDER BY year_month DESC"
+    
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def update_mortgage_monthly(year_month, principal=None, interest=None, remaining_balance=None):
+    """Update an existing mortgage monthly entry."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    fields, values = [], []
+    if principal is not None:
+        fields.append("principal = ?")
+        values.append(principal)
+    if interest is not None:
+        fields.append("interest = ?")
+        values.append(interest)
+    if remaining_balance is not None:
+        fields.append("remaining_balance = ?")
+        values.append(remaining_balance)
+        
+    if not fields:
+        print("⚠️  No fields to update!")
+        return
+        
+    values.append(year_month)
+    cursor.execute(f"""
+        UPDATE mortgage
+        SET {', '.join(fields)}
+        WHERE year_month = ?
+    """, values)
+    if cursor.rowcount == 0:
+        print(f"⚠️  Mortgage monthly entry for '{year_month}' not found!")
+    else:
+        print(f"✅ Mortgage monthly entry for '{year_month}' updated!")
+    conn.commit()
+    conn.close()
+
+def delete_mortgage_monthly(year_month):
+    """Delete a mortgage monthly entry."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        DELETE FROM mortgage
+        WHERE year_month = ?
+    """, (year_month,))
+    conn.commit()
+    if cursor.rowcount == 0:
+        print(f"⚠️  Mortgage monthly entry for '{year_month}' not found!")
+    else:
+        print(f"🗑️  Mortgage monthly entry for '{year_month}' deleted!")
+    conn.close()
+
+# ══════════════════════════════════════════════════════════════
+#  LEDGER CRUD
+# ══════════════════════════════════════════════════════════════
+
+def insert_ledger_entry(type, category, amount, ledger_datetime=None, comment=None):
+    """Insert a new ledger entry."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    # Convert datetime to "yyyy-mm" format for month_str
+    
+    ledger_datetime, month_str = get_month_str(ledger_datetime)
+
+    cursor.execute("""
+        INSERT INTO ledger (datetime, month_str, type, category, amount, comment)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """, (ledger_datetime, month_str, type, category, amount, comment))
+    conn.commit()
+    print(f"✅ Ledger entry '{category}' added!")
+    conn.close()
+
+
+def get_ledger_entries(start_date=None, end_date=None, type=None, category=None, month_str=None):
+    """Retrieve ledger entries, optionally filtered by date range, type, category, and/or month_str."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    query = """
+        SELECT id, datetime, month_str, type, category, amount, comment
+        FROM ledger
+        WHERE 1=1
+    """
+    params = []
+    
+    if start_date:
+        query += " AND datetime >= ?"
+        params.append(start_date)
+    if end_date:
+        query += " AND datetime <= ?"
+        params.append(end_date)
+    if type:
+        query += " AND type = ?"
+        params.append(type)
+    if category:
+        query += " AND category = ?"
+        params.append(category)
+    if month_str:
+        query += " AND month_str = ?"
+        params.append(month_str)
+        
+    query += " ORDER BY datetime DESC"
+    
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def update_ledger_entry(entry_id, ledger_datetime=None, type=None, category=None, amount=None, comment=None):
+    """Update an existing ledger entry."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    fields, values = [], []
+    if ledger_datetime is not None:
+        ledger_datetime, month_str = get_month_str(ledger_datetime)
+        fields.append("datetime = ?")
+        values.append(ledger_datetime)
+        fields.append("month_str = ?")
+        values.append(month_str)
+    if type is not None:
+        fields.append("type = ?")
+        values.append(type)
+    if category is not None:
+        fields.append("category = ?")
+        values.append(category)
+    if amount is not None:
+        fields.append("amount = ?")
+        values.append(amount)
+    if comment is not None:
+        fields.append("comment = ?")
+        values.append(comment)
+        
+    if not fields:
+        print("⚠️  No fields to update!")
+        return
+        
+    values.append(entry_id)
+    cursor.execute(f"""
+        UPDATE ledger
+        SET {', '.join(fields)}
+        WHERE id = ?
+    """, values)
+    if cursor.rowcount == 0:
+        print(f"⚠️  Ledger entry with ID '{entry_id}' not found!")
+    else:
+        print(f"✅ Ledger entry with ID '{entry_id}' updated!")
+    conn.commit()
+    conn.close()
+
+def delete_ledger_entry(entry_id):
+    """Delete a ledger entry by ID."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM ledger WHERE id = ?", (entry_id,))
+    conn.commit()
+    if cursor.rowcount == 0:
+        print(f"⚠️  Ledger entry with ID '{entry_id}' not found!")
+    else:
+        print(f"🗑️  Ledger entry with ID '{entry_id}' deleted!")
+    conn.close()
+
+#  SEED SAMPLE DATA & MAIN
+# ══════════════════════════════════════════════════════════════
+if __name__ == "__main__":
+    '''
+    # Insert sample data into all tables
+    insert_stock("AAPL", "Apple Inc.", "Technology", "USD")
+    insert_portfolio("AAPL", 10, 150.0, "2023-10-01 10:00:00")
+    insert_transaction("AAPL", "BUY", 10, 150.0, "Initial purchase", "2023-10-01 10:00:00")
+    insert_watchlist("AAPL", 200.0, "Monitor for price increase")
+    insert_dividend("AAPL", 0.5, 10, "2023-10-15 10:00:00")
+    insert_monthly_snapshot("2023-10", "AAPL", 10, 150.0)
+    
+    insert_monthly_pnl("2023-10", 1000.0, 200.0, 50.0, 150.0, 5.0)
+    
+    insert_mortgage_monthly("2023-10", 500.0, 50.0, 9500.0)
+    insert_ledger_entry("E", "Utilities", 100.0, "2023-10-05 12:00:00", "Electricity bill")
+
+    # Retrieve data from all tables
+    print(get_portfolio())
+    print(get_transactions("2023-10"))
+    print(get_watchlist())
+    print(get_dividends("AAPL", "2023-10"))
+    print(get_monthly_snapshots("2023-10"))
+    print(get_monthly_pnl("2023-10"))
+    print(get_mortgage_monthly("2023-10"))
+    print(get_ledger_entries(month_str="2023-10"))
+
+    # Update data in all tables
+    update_portfolio(1, quantity=15, avg_buy_price=155.0)
+    update_transaction(1, quantity=12, price=152.0)
+    update_watchlist("AAPL", target_price=210.0, notes="Updated target price")
+    update_dividend(1, amount_per_share=0.6)
+    update_monthly_snapshot("2023-10", "AAPL", start_quantity=12, start_price=155.0)
+    update_monthly_pnl("2023-10", income=250.0)
+    update_mortgage_monthly("2023-10", principal=550.0)
+    update_ledger_entry(1, amount=120.0, comment="Updated electricity bill")
+
+    # Delete a row from all tables
+    delete_portfolio(1)
+    delete_transaction(1)
+    delete_watchlist("AAPL")
+    delete_dividend(1)
+    delete_monthly_snapshot("2023-10", "AAPL")
+    delete_monthly_pnl("2023-10")
+    delete_mortgage_monthly("2023-10")
+    delete_ledger_entry(1)
+    '''
