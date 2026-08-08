@@ -41,7 +41,7 @@ jobs:
             --exclude "*.yml" \
             --exclude "*.md"
 
-      - name: Deploy allowed Python files to AWS Lambda
+      - name: Deploy Lambda functions
         run: |
           mkdir -p build
       
@@ -67,3 +67,25 @@ jobs:
           }
       
           deploy_lambda "lambda_monthly_pnl" "lambda_monthly_pnl.py" "crud_db.py"
+          deploy_lambda "lambda_s3_to_efs" "lambda_s3_to_efs.py"
+
+      # ── Trigger S3-to-EFS copy Lambda ──────────────────────────────────────
+      - name: Trigger S3-to-EFS copy Lambda
+        run: |
+          RESPONSE=$(aws lambda invoke \
+            --function-name lambda_s3_to_efs \
+            --payload '{}' \
+            --cli-binary-format raw-in-base64-out \
+            response.json)
+
+          echo "Lambda response:"
+          cat response.json
+
+          # Fail the pipeline if Lambda returned an error
+          STATUS=$(python3 -c "import json; d=json.load(open('response.json')); print(d.get('statusCode', 500))")
+          if [ "$STATUS" != "200" ]; then
+            echo "❌ S3-to-EFS copy failed!"
+            exit 1
+          fi
+
+          echo "✅ mystocks.db successfully copied to EFS!"

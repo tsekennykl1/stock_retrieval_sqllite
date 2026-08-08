@@ -6,7 +6,7 @@ import os
 # Dynamically set DB path (Defaults to local mystocks.db, overwritten in Lambda)
 DB_PATH = "mystocks.db"
 if "AWS_LAMBDA_FUNCTION_NAME" in os.environ:
-    DB_PATH = os.environ.get("DB_PATH", "mystocks.db")
+    DB_PATH = os.environ.get("DB_PATH", "/tmp/mystocks.db")
 
 
 print(f"Using database path: {DB_PATH}")
