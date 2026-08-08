@@ -2,30 +2,32 @@ import boto3
 import os
 import shutil
 
-S3_BUCKET = os.environ.get("S3_BUCKET_NAME")
-EFS_PATH = "/mnt/efs"
+s3 = boto3.client('s3')
+
+S3_BUCKET = os.environ['S3_BUCKET_NAME']
+EFS_PATH  = os.environ['EFS_PATH']          # /mnt/efs
 
 def lambda_handler(event, context):
-    s3 = boto3.client("s3")
+    filename  = event.get('filename', 'mystocks.db')
+    tmp_path  = f'/tmp/{filename}'           # Lambda always has write access here
+    efs_path  = f'{EFS_PATH}/{filename}'     # /mnt/efs/mystocks.db
 
-    files_to_copy = [
-        "mystocks.db",
-        "crud_db.py",
-    ]
+    print(f"⬇️  Downloading s3://{S3_BUCKET}/{filename} → {tmp_path}")
+    s3.download_file(S3_BUCKET, filename, tmp_path)
 
-    for filename in files_to_copy:
-        local_path = f"/tmp/{filename}"
-        efs_path = f"{EFS_PATH}/{filename}"
+    print(f"📁 Copying {tmp_path} → {efs_path}")
+    # Ensure target directory exists
+    os.makedirs(os.path.dirname(efs_path), exist_ok=True)
 
-        print(f"Downloading s3://{S3_BUCKET}/{filename} → {local_path}")
-        s3.download_file(S3_BUCKET, filename, local_path)
+    # Use os.replace for atomic write (safer than shutil.copy2)
+    shutil.copy2(tmp_path, efs_path)
+    os.chmod(efs_path, 0o644)               # rw-r--r--
 
-        print(f"Copying {local_path} → {efs_path}")
-        shutil.copy2(local_path, efs_path)
+    # Clean up tmp
+    os.remove(tmp_path)
 
-        print(f"✅ {filename} copied to EFS")
-
+    print(f"✅ Successfully copied {filename} to EFS at {efs_path}")
     return {
-        "statusCode": 200,
-        "body": "Files copied from S3 to EFS successfully"
+        'statusCode': 200,
+        'body': f'Successfully copied {filename} to {efs_path}'
     }
