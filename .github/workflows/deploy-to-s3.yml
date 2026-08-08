@@ -1,121 +1,158 @@
-- name: Deploy Lambda functions
-env:
-  S3_BUCKET_NAME:        ${{ secrets.S3_BUCKET_NAME }}
-  LAMBDA_ROLE_ARN:       ${{ secrets.LAMBDA_ROLE_ARN }}
-  VPC_SUBNET_IDS:        ${{ secrets.VPC_SUBNET_IDS }}
-  VPC_SECURITY_GROUP_ID: ${{ secrets.VPC_SECURITY_GROUP_ID }}
-  EFS_ACCESS_POINT_ARN:  ${{ secrets.EFS_ACCESS_POINT_ARN }}
-run: |
-  mkdir -p build
+name: Deploy SQLite DB to EFS via S3
 
-  deploy_lambda() {
-    FUNCTION_NAME="$1"
-    shift
-    # All remaining args are key=value env var pairs
-    # e.g. "DB_PATH=/mnt/efs/mystocks.db" "S3_BUCKET_NAME=mybucket"
-    ENV_PAIRS=()
-    FILES=()
-    PARSING_ENV=true
+on:
+  push:
+    branches:
+      - main
 
-    for arg in "$@"; do
-      if [[ "$arg" == --files ]]; then
-        PARSING_ENV=false
-      elif $PARSING_ENV; then
-        ENV_PAIRS+=("$arg")
-      else
-        FILES+=("$arg")
-      fi
-    done
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
 
-    echo "──────────────────────────────────────────"
-    echo "Deploying: $FUNCTION_NAME"
-    echo "──────────────────────────────────────────"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    # 1. Build zip
-    rm -rf build/*
-    for f in "${FILES[@]}"; do
-      cp "$f" build/
-    done
-    cd build && zip -r "../${FUNCTION_NAME}.zip" . && cd ..
-    echo "✅ Zip created: ${FUNCTION_NAME}.zip"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-    # 2. Write env vars to a JSON file (avoids all quoting issues)
-    ENV_JSON="{\"Variables\":{"
-    FIRST=true
-    for pair in "${ENV_PAIRS[@]}"; do
-      KEY="${pair%%=*}"
-      VAL="${pair#*=}"
-      if $FIRST; then
-        FIRST=false
-      else
-        ENV_JSON+=","
-      fi
-      ENV_JSON+="\"${KEY}\":\"${VAL}\""
-    done
-    ENV_JSON+="}}"
-    echo "$ENV_JSON" > /tmp/${FUNCTION_NAME}_env.json
-    echo "🔧 Environment variables:"
-    cat /tmp/${FUNCTION_NAME}_env.json
+      - name: Generate SQLite Database
+        run: python create_db.py
 
-    # 3. Parse subnet IDs into space-separated list
-    SUBNET_LIST=$(echo "$VPC_SUBNET_IDS" | tr ',' ' ')
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-    # 4. Check if Lambda already exists
-    if aws lambda get-function --function-name "$FUNCTION_NAME" > /dev/null 2>&1; then
-      echo "🔄 Function exists — updating code..."
-      aws lambda update-function-code \
-        --function-name "$FUNCTION_NAME" \
-        --zip-file "fileb://${FUNCTION_NAME}.zip"
+      # ── Upload mystocks.db and files to S3 (staging area) ──────────────────
+      - name: Upload SQLite DB to S3
+        run: |
+          aws s3 cp mystocks.db s3://${{ secrets.S3_BUCKET_NAME }}/mystocks.db
+          echo "✅ Database uploaded to S3 staging area"
 
-      aws lambda wait function-updated \
-        --function-name "$FUNCTION_NAME"
-
-    else
-      echo "🆕 Function not found — creating..."
-      aws lambda create-function \
-        --function-name "$FUNCTION_NAME" \
-        --runtime python3.11 \
-        --role "$LAMBDA_ROLE_ARN" \
-        --handler "${FUNCTION_NAME}.lambda_handler" \
-        --zip-file "fileb://${FUNCTION_NAME}.zip" \
-        --timeout 60 \
-        --memory-size 256 \
-        --environment "file:///tmp/${FUNCTION_NAME}_env.json" \
-        --vpc-config "SubnetIds=${SUBNET_LIST},SecurityGroupIds=${VPC_SECURITY_GROUP_ID}" \
-        --file-system-configs \
-          "Arn=${EFS_ACCESS_POINT_ARN},LocalMountPath=/mnt/efs"
-
-      aws lambda wait function-active \
-        --function-name "$FUNCTION_NAME"
-
-      echo "✅ Function created: $FUNCTION_NAME"
-    fi
-
-    # 5. Always sync env vars and config (idempotent)
-    echo "🔧 Syncing environment variables and config..."
-    aws lambda update-function-configuration \
-      --function-name "$FUNCTION_NAME" \
-      --environment "file:///tmp/${FUNCTION_NAME}_env.json" \
-      --vpc-config "SubnetIds=${VPC_SUBNET_IDS},SecurityGroupIds=${VPC_SECURITY_GROUP_ID}" \
-      --file-system-configs \
-        "Arn=${EFS_ACCESS_POINT_ARN},LocalMountPath=/mnt/efs"
-
-    aws lambda wait function-updated \
-      --function-name "$FUNCTION_NAME"
-
-    echo "✅ Done: $FUNCTION_NAME"
-  }
-
-  # ── Deploy lambda_monthly_pnl ──────────────────────────────────────
-  deploy_lambda "lambda_monthly_pnl" \
-    "DB_PATH=/mnt/efs/mystocks.db" \
-    "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
-    --files \
-    "lambda_monthly_pnl.py" "crud_db.py"
-
-  # ── Deploy lambda_s3_to_efs ────────────────────────────────────────
-  deploy_lambda "lambda_s3_to_efs" \
-    "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
-    "EFS_PATH=/mnt/efs" \
-    --files \
-    "lambda_s3_to_efs.py"
+          - name: Deploy Lambda functions
+          env:
+            S3_BUCKET_NAME:        ${{ secrets.S3_BUCKET_NAME }}
+            LAMBDA_ROLE_ARN:       ${{ secrets.LAMBDA_ROLE_ARN }}
+            VPC_SUBNET_IDS:        ${{ secrets.VPC_SUBNET_IDS }}
+            VPC_SECURITY_GROUP_ID: ${{ secrets.VPC_SECURITY_GROUP_ID }}
+            EFS_ACCESS_POINT_ARN:  ${{ secrets.EFS_ACCESS_POINT_ARN }}
+          run: |
+            mkdir -p build
+          
+            deploy_lambda() {
+              FUNCTION_NAME="$1"
+              shift
+              # All remaining args are key=value env var pairs
+              # e.g. "DB_PATH=/mnt/efs/mystocks.db" "S3_BUCKET_NAME=mybucket"
+              ENV_PAIRS=()
+              FILES=()
+              PARSING_ENV=true
+          
+              for arg in "$@"; do
+                if [[ "$arg" == --files ]]; then
+                  PARSING_ENV=false
+                elif $PARSING_ENV; then
+                  ENV_PAIRS+=("$arg")
+                else
+                  FILES+=("$arg")
+                fi
+              done
+          
+              echo "──────────────────────────────────────────"
+              echo "Deploying: $FUNCTION_NAME"
+              echo "──────────────────────────────────────────"
+          
+              # 1. Build zip
+              rm -rf build/*
+              for f in "${FILES[@]}"; do
+                cp "$f" build/
+              done
+              cd build && zip -r "../${FUNCTION_NAME}.zip" . && cd ..
+              echo "✅ Zip created: ${FUNCTION_NAME}.zip"
+          
+              # 2. Write env vars to a JSON file (avoids all quoting issues)
+              ENV_JSON="{\"Variables\":{"
+              FIRST=true
+              for pair in "${ENV_PAIRS[@]}"; do
+                KEY="${pair%%=*}"
+                VAL="${pair#*=}"
+                if $FIRST; then
+                  FIRST=false
+                else
+                  ENV_JSON+=","
+                fi
+                ENV_JSON+="\"${KEY}\":\"${VAL}\""
+              done
+              ENV_JSON+="}}"
+              echo "$ENV_JSON" > /tmp/${FUNCTION_NAME}_env.json
+              echo "🔧 Environment variables:"
+              cat /tmp/${FUNCTION_NAME}_env.json
+          
+              # 3. Parse subnet IDs into space-separated list
+              SUBNET_LIST=$(echo "$VPC_SUBNET_IDS" | tr ',' ' ')
+          
+              # 4. Check if Lambda already exists
+              if aws lambda get-function --function-name "$FUNCTION_NAME" > /dev/null 2>&1; then
+                echo "🔄 Function exists — updating code..."
+                aws lambda update-function-code \
+                  --function-name "$FUNCTION_NAME" \
+                  --zip-file "fileb://${FUNCTION_NAME}.zip"
+          
+                aws lambda wait function-updated \
+                  --function-name "$FUNCTION_NAME"
+          
+              else
+                echo "🆕 Function not found — creating..."
+                aws lambda create-function \
+                  --function-name "$FUNCTION_NAME" \
+                  --runtime python3.11 \
+                  --role "$LAMBDA_ROLE_ARN" \
+                  --handler "${FUNCTION_NAME}.lambda_handler" \
+                  --zip-file "fileb://${FUNCTION_NAME}.zip" \
+                  --timeout 60 \
+                  --memory-size 256 \
+                  --environment "file:///tmp/${FUNCTION_NAME}_env.json" \
+                  --vpc-config "SubnetIds=${SUBNET_LIST},SecurityGroupIds=${VPC_SECURITY_GROUP_ID}" \
+                  --file-system-configs \
+                    "Arn=${EFS_ACCESS_POINT_ARN},LocalMountPath=/mnt/efs"
+          
+                aws lambda wait function-active \
+                  --function-name "$FUNCTION_NAME"
+          
+                echo "✅ Function created: $FUNCTION_NAME"
+              fi
+          
+              # 5. Always sync env vars and config (idempotent)
+              echo "🔧 Syncing environment variables and config..."
+              aws lambda update-function-configuration \
+                --function-name "$FUNCTION_NAME" \
+                --environment "file:///tmp/${FUNCTION_NAME}_env.json" \
+                --vpc-config "SubnetIds=${VPC_SUBNET_IDS},SecurityGroupIds=${VPC_SECURITY_GROUP_ID}" \
+                --file-system-configs \
+                  "Arn=${EFS_ACCESS_POINT_ARN},LocalMountPath=/mnt/efs"
+          
+              aws lambda wait function-updated \
+                --function-name "$FUNCTION_NAME"
+          
+              echo "✅ Done: $FUNCTION_NAME"
+            }
+          
+            # ── Deploy lambda_monthly_pnl ──────────────────────────────────────
+            deploy_lambda "lambda_monthly_pnl" \
+              "DB_PATH=/mnt/efs/mystocks.db" \
+              "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
+              --files \
+              "lambda_monthly_pnl.py" "crud_db.py"
+          
+            # ── Deploy lambda_s3_to_efs ────────────────────────────────────────
+            deploy_lambda "lambda_s3_to_efs" \
+              "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
+              "EFS_PATH=/mnt/efs" \
+              --files \
+              "lambda_s3_to_efs.py"
+          
