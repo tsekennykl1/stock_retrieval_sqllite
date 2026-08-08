@@ -1,8 +1,15 @@
 import sqlite3
 from datetime import datetime, timedelta
 from calendar import monthrange
+import os
+
+# Dynamically set DB path (Defaults to local mystocks.db, overwritten in Lambda)
+DB_PATH = "mystocks.db"
+if "AWS_LAMBDA_FUNCTION_NAME" in os.environ:
+    DB_PATH = os.environ.get("DB_PATH", "mystocks.db")
 
 
+print(f"Using database path: {DB_PATH}")
 def get_month_str(_date=None):
     """Convert a transaction date to 'yyyy-mm' format, or use the current date if not provided."""
     if _date:
@@ -11,7 +18,7 @@ def get_month_str(_date=None):
 
 def get_connection():
     """Establish and return a connection to the SQLite database."""
-    conn = sqlite3.connect("mystocks.db")
+    conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 

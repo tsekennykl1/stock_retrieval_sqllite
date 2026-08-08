@@ -29,6 +29,24 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Upload SQLite DB to S3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
           aws s3 cp mystocks.db s3://${{ secrets.S3_BUCKET_NAME }}/mystocks.db
           echo "Database uploaded successfully!"
+          - name: Deploy to S3
+          aws s3 sync . s3://${{ secrets.S3_BUCKET_NAME }}/github --exclude ".git/*" --exclude ".github/*" --exclude "*.yml" --exclude "*.md"
+
+      - name: Deploy Python files to AWS Lambda
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          for file in $(find . -name "*.py"); do
+            function_name=$(basename "$file" .py)
+            zip -j "$function_name.zip" "$file"
+            aws lambda update-function-code --function-name "$function_name" --zip-file "fileb://$function_name.zip"
+          done

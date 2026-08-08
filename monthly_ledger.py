@@ -45,4 +45,4 @@ def get_monthly_ledger(year_month):
 
 
 # Example usage:
-print(get_monthly_ledger("2026-08"))
+#print(get_monthly_ledger("2026-08"))

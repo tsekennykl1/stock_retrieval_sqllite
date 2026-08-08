@@ -1,6 +1,7 @@
 import requests
 import json
 from datetime import datetime, timedelta
+from s3_db_sync import s3_db_wrapper
 
 # Import CRUD functions from your existing create_db.py
 from crud_db import (
@@ -211,19 +212,7 @@ def calculate_monthly_dividends(year_month):
     return total_dividends
 
 
-
-
-if __name__ == "__main__":
-    current_month = datetime.now().strftime('%Y-%m')
-    
- #   print("1. Take/Update Snapshot for this month")
- #   print("2. View Monthly Performance")
- #   choice = input("Select an option (1/2): ")
-    
- #   if choice == '1':
- #       snapshot_beginning_of_month(current_month)
- #   elif choice == '2':
-
+def value_fresh(current_month):
 
     portfolio = get_portfolio_performance_json(print_html=False)
     monthly_performance = calculate_monthly_performance(current_month,print_table=True)
@@ -274,3 +263,32 @@ if __name__ == "__main__":
     print(json.dumps(monthly_pnl, indent=4))
     print("\n✅ Monthly P&L summary retrieved successfully.")
     
+
+def lambda_handler(event=None, context=None):
+    """AWS Lambda Entry Point"""
+    
+    # Everything inside this 'with' block acts on the S3 database
+    with s3_db_wrapper():
+        current_month = datetime.now().strftime('%Y-%m')
+        
+        try:
+            portfolio = get_portfolio_performance_json(print_html=False)
+
+        except Exception as e:
+            print(f"Error fetching portfolio performance: {e}")
+            portfolio = {}
+
+
+
+if __name__ == "__main__":
+    current_month = datetime.now().strftime('%Y-%m')
+    
+ #   print("1. Take/Update Snapshot for this month")
+ #   print("2. View Monthly Performance")
+ #   choice = input("Select an option (1/2): ")
+    
+ #   if choice == '1':
+ #       snapshot_beginning_of_month(current_month)
+ #   elif choice == '2':
+
+    value_fresh(current_month=current_month)
