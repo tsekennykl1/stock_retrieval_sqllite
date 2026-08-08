@@ -80,7 +80,6 @@ jobs:
 
             echo "──────────────────────────────────────────"
             echo "Deploying: $FUNCTION_NAME"
-            echo "  Env vars : ${ENV_PAIRS[*]}"
             echo "  Files    : ${FILES[*]}"
             echo "──────────────────────────────────────────"
 
@@ -92,7 +91,7 @@ jobs:
             cd build && zip -r "../${FUNCTION_NAME}.zip" . && cd ..
             echo "✅ Zip created: ${FUNCTION_NAME}.zip"
 
-            # 2. Write env vars to JSON file (avoids all quoting issues)
+            # 2. Write env vars to JSON file
             ENV_JSON="{\"Variables\":{"
             FIRST=true
             for pair in "${ENV_PAIRS[@]}"; do
@@ -109,10 +108,20 @@ jobs:
             echo "$ENV_JSON" > /tmp/${FUNCTION_NAME}_env.json
             echo "🔧 Env JSON: $(cat /tmp/${FUNCTION_NAME}_env.json)"
 
-            # 3. Parse subnet IDs into space-separated list
-            SUBNET_LIST=$(echo "$VPC_SUBNET_IDS" | tr ',' ' ')
+            # 3. Write VPC config to JSON file (fixes bracket/formatting issues)
+            # Convert comma-separated subnet IDs to JSON array
+            SUBNET_JSON=$(echo "$VPC_SUBNET_IDS" | tr ',' '\n' | \
+              awk 'BEGIN{printf "["} NR>1{printf ","} {printf "\"%s\"", $1} END{printf "]"}')
+            VPC_JSON="{\"SubnetIds\":${SUBNET_JSON},\"SecurityGroupIds\":[\"${VPC_SECURITY_GROUP_ID}\"]}"
+            echo "$VPC_JSON" > /tmp/${FUNCTION_NAME}_vpc.json
+            echo "🔧 VPC JSON: $(cat /tmp/${FUNCTION_NAME}_vpc.json)"
 
-            # 4. Check if Lambda already exists
+            # 4. Write EFS config to JSON file
+            EFS_JSON="[{\"Arn\":\"${EFS_ACCESS_POINT_ARN}\",\"LocalMountPath\":\"/mnt/efs\"}]"
+            echo "$EFS_JSON" > /tmp/${FUNCTION_NAME}_efs.json
+            echo "🔧 EFS JSON: $(cat /tmp/${FUNCTION_NAME}_efs.json)"
+
+            # 5. Check if Lambda already exists
             if aws lambda get-function --function-name "$FUNCTION_NAME" > /dev/null 2>&1; then
               echo "🔄 Function exists — updating code..."
               aws lambda update-function-code \
@@ -133,9 +142,8 @@ jobs:
                 --timeout 60 \
                 --memory-size 256 \
                 --environment "file:///tmp/${FUNCTION_NAME}_env.json" \
-                --vpc-config "SubnetIds=${SUBNET_LIST},SecurityGroupIds=${VPC_SECURITY_GROUP_ID}" \
-                --file-system-configs \
-                  "Arn=${EFS_ACCESS_POINT_ARN},LocalMountPath=/mnt/efs"
+                --vpc-config "file:///tmp/${FUNCTION_NAME}_vpc.json" \
+                --file-system-configs "file:///tmp/${FUNCTION_NAME}_efs.json"
 
               aws lambda wait function-active \
                 --function-name "$FUNCTION_NAME"
@@ -143,14 +151,13 @@ jobs:
               echo "✅ Function created: $FUNCTION_NAME"
             fi
 
-            # 5. Always sync env vars and config (idempotent)
+            # 6. Always sync env vars and config (idempotent)
             echo "🔧 Syncing environment variables and config..."
             aws lambda update-function-configuration \
               --function-name "$FUNCTION_NAME" \
               --environment "file:///tmp/${FUNCTION_NAME}_env.json" \
-              --vpc-config "SubnetIds=${VPC_SUBNET_IDS},SecurityGroupIds=${VPC_SECURITY_GROUP_ID}" \
-              --file-system-configs \
-                "Arn=${EFS_ACCESS_POINT_ARN},LocalMountPath=/mnt/efs"
+              --vpc-config "file:///tmp/${FUNCTION_NAME}_vpc.json" \
+              --file-system-configs "file:///tmp/${FUNCTION_NAME}_efs.json"
 
             aws lambda wait function-updated \
               --function-name "$FUNCTION_NAME"
