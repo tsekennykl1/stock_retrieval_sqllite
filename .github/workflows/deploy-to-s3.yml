@@ -43,8 +43,17 @@ jobs:
 
       - name: Deploy Python files to AWS Lambda
         run: |
-          for file in $(find . -name "*.py"); do
-            function_name=$(basename "$file" .py)
-            zip -j "$function_name.zip" "$file"
-            aws lambda update-function-code --function-name "$function_name" --zip-file "fileb://$function_name.zip"
+          allowed_files=("lambda_monthly_pnl.py")
+
+          for file in "${allowed_files[@]}"; do
+            if [ -f "$file" ]; then
+              function_name=$(basename "$file" .py)
+              zip -j "$function_name.zip" "$file"
+              aws lambda update-function-code \
+                --function-name "$function_name" \
+                --zip-file "fileb://$function_name.zip"
+              echo "Deployed $file to Lambda function $function_name"
+            else
+              echo "File $file not found, skipping"
+            fi
           done
