@@ -32,25 +32,33 @@ def retrieve_monthly_pnl(start_date):
     except Exception as e:
         return json.dumps({"error": str(e)})
 
+
 def lambda_handler(event, context):
     """
     AWS Lambda entry point.
-    Expects 'start_date' in the event payload.
+    Expects 'start_date' in query string (?start_date=YYYY-MM) for GET via API Gateway,
+    or in the event body for POST, or directly in the event for console testing.
     """
-    
-    # ✅ Correct way to read query string parameters for HTTP API
+
+    # 1. Try query string parameters (GET request via API Gateway)
     params = event.get('queryStringParameters') or {}
     start_date = params.get('start_date')
 
+    # 2. Try JSON body (POST request via API Gateway)
     if not start_date:
-        return {
-            'statusCode': 400,
-            'body': json.dumps({'error': "Missing 'start_date' in the request."})
-        }
-    
-    # rest of your logic...
+        body = event.get('body')
+        if body:
+            try:
+                body_json = json.loads(body) if isinstance(body, str) else body
+                start_date = body_json.get('start_date')
+            except (json.JSONDecodeError, AttributeError):
+                pass
 
-    start_date = event.get('start_date', None)
+    # 3. Try direct event payload (Lambda console testing)
+    if not start_date:
+        start_date = event.get('start_date')
+
+    # Validate
     if not start_date:
         return {
             "statusCode": 400,
@@ -62,6 +70,7 @@ def lambda_handler(event, context):
         "statusCode": 200,
         "body": result
     }
+
 
 if __name__ == "__main__":
     # For local testing
