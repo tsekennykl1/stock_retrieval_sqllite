@@ -89,6 +89,7 @@ def create_tables():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS monthly_snapshots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            snapshot_date DATETIME DEFAULT CURRENT_TIMESTAMP,
             year_month TEXT NOT NULL,
             stock_symbol TEXT NOT NULL,
             start_quantity REAL NOT NULL,
@@ -101,6 +102,7 @@ def create_tables():
     # ── Table 7: Monthly P&L table  ────────────────────
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS monthly_pnl (
+            pnl_date DATETIME DEFAULT CURRENT_TIMESTAMP,
             year_month TEXT NOT NULL PRIMARY KEY,
             open_bal REAL NOT NULL DEFAULT 0,
             income REAL DEFAULT 0,
@@ -115,6 +117,7 @@ def create_tables():
     # ── Table 8: Mortgage Monthly Table ────────────────────────────────
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS mortgage (
+            period DATETIME DEFAULT CURRENT_TIMESTAMP,
             year_month TEXT NOT NULL PRIMARY KEY,
             principal REAL NOT NULL,
             interest REAL NOT NULL,

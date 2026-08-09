@@ -214,7 +214,7 @@ def calculate_monthly_dividends(year_month):
 
 def value_fresh(current_month):
 
-    portfolio = get_portfolio_performance_json(print_html=False)
+    portfolio = get_portfolio_performance_json(print_html=True)
     monthly_performance = calculate_monthly_performance(current_month,print_table=True)
     dividends = calculate_monthly_dividends(current_month)  
     

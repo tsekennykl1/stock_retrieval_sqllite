@@ -13,8 +13,37 @@ print(f"Using database path: {DB_PATH}")
 def get_month_str(_date=None):
     """Convert a transaction date to 'yyyy-mm' format, or use the current date if not provided."""
     if _date:
-        return _date, datetime.strptime(_date, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m")
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S"), datetime.now().strftime("%Y-%m")
+        if isinstance(_date, datetime):
+
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y-%m", "%Y/%m/%d", "%Y/%m"):
+                try:
+                    return datetime.strptime(_date, fmt).strftime("%Y-%m-%d %H:%M:%S"), datetime.strptime(_date, fmt).strftime("%Y-%m")
+                except ValueError:
+                    continue
+
+        try:
+            if isinstance(_date, str):
+                # Check if _date matches one of the expected formats
+                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y-%m", "%Y/%m/%d", "%Y/%m"):
+                    try:
+                        return _date, datetime.strptime(_date, fmt).strftime("%Y-%m")
+                    except ValueError:
+                        continue
+                raise ValueError(f"Invalid date format: {_date}")
+            else:
+                raise ValueError("Invalid date format")
+        except ValueError:
+            try:
+                return _date, datetime.strptime(_date, "%Y-%m-%d").strftime("%Y-%m")
+            except ValueError:
+                raise ValueError(f"Invalid date format: {_date}")
+    now = datetime.now()
+    return now.strftime("%Y-%m-%d %H:%M:%S"), now.strftime("%Y-%m")
+
+def convertYearMonth (year_month):
+        year, month = map(int, year_month.split('-'))
+        last_day = monthrange(year, month)[1]
+        return datetime(year, month, last_day, 23, 59, 59).strftime("%Y-%m-%d %H:%M:%S") 
 
 def get_connection():
     """Establish and return a connection to the SQLite database."""
@@ -43,6 +72,70 @@ def insert_stock(symbol, name, sector=None, currency='HKD'):
         return None
     finally:
         conn.close()
+
+def get_stock(symbol):
+    """Retrieve a stock's details by its symbol."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT symbol, name, sector, currency
+        FROM stocks
+        WHERE symbol = ?
+    """, (symbol.upper(),))
+    stock = cursor.fetchone()
+    conn.close()
+    if stock:
+        return dict(stock)
+    else:
+        print(f"⚠️  Stock '{symbol.upper()}' not found!")
+        return None
+
+def update_stock(symbol, name=None, sector=None, currency=None):
+    """Update an existing stock's details."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    fields, values = [], []
+    if name is not None:
+        fields.append("name = ?")
+        values.append(name)
+    if sector is not None:
+        fields.append("sector = ?")
+        values.append(sector)
+    if currency is not None:
+        fields.append("currency = ?")
+        values.append(currency)
+    
+    if not fields:
+        print("⚠️  No fields to update!")
+        return
+    
+    values.append(symbol.upper())
+    cursor.execute(f"""
+        UPDATE stocks
+        SET {', '.join(fields)}
+        WHERE symbol = ?
+    """, values)
+    if cursor.rowcount == 0:
+        print(f"⚠️  Stock '{symbol.upper()}' not found!")
+    else:
+        print(f"✅ Stock '{symbol.upper()}' updated successfully!")
+    conn.commit()
+    conn.close()
+
+def delete_stock(symbol):
+    """Delete a stock by its symbol."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        DELETE FROM stocks
+        WHERE symbol = ?
+    """, (symbol.upper(),))
+    conn.commit()
+    if cursor.rowcount == 0:
+        print(f"⚠️  Stock '{symbol.upper()}' not found!")
+    else:
+        print(f"🗑️  Stock '{symbol.upper()}' deleted successfully!")
+    conn.close()
 
 # ...existing code...
 # ══════════════════════════════════════════════════════════════
@@ -482,25 +575,33 @@ def delete_dividend(dividend_id):
 #  MONTHLY SNAPSHOTS CRUD
 # ══════════════════════════════════════════════════════════════
 
-def insert_monthly_snapshot(year_month, stock_symbol, start_quantity, start_price):
+def insert_monthly_snapshot(stock_symbol, start_quantity, start_price, year_month=None, snapshot_date=None):
     """Insert or update a monthly starting position."""
     conn = get_connection()
     cursor = conn.cursor()
+    if snapshot_date is None:
+        if year_month:
+            snapshot_date = convertYearMonth(year_month)
+        else:
+            snapshot_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # Default to current date if neither is provided
+            year_month = datetime.now().strftime("%Y-%m")  # Default to current month if year_month is not provided
+    else: 
+        snapshot_date, year_month = get_month_str(snapshot_date)
     cursor.execute("""
-        INSERT OR REPLACE INTO monthly_snapshots (year_month, stock_symbol, start_quantity, start_price)
-        VALUES (?, ?, ?, ?)
-    """, (year_month, stock_symbol.upper(), start_quantity, start_price))
+        INSERT OR REPLACE INTO monthly_snapshots (year_month, stock_symbol, start_quantity, start_price, snapshot_date)
+        VALUES (?, ?, ?, ?, ?)
+    """, (year_month, stock_symbol.upper(), start_quantity, start_price, snapshot_date))
     conn.commit()
     conn.close()
 
 
-def get_monthly_snapshots(year_month=None, stock_symbol=None):
+def get_monthly_snapshots(year_month=None, stock_symbol=None, snapshot_date=None):  
     """Get snapshots, optionally filtered by month and/or symbol."""
     conn = get_connection()
     cursor = conn.cursor()
     
     query = """
-        SELECT id, year_month, stock_symbol, start_quantity, start_price
+        SELECT id, snapshot_date, year_month, stock_symbol, start_quantity, start_price
         FROM monthly_snapshots
         WHERE 1=1
     """
@@ -512,6 +613,9 @@ def get_monthly_snapshots(year_month=None, stock_symbol=None):
     if stock_symbol:
         query += " AND stock_symbol = ?"
         params.append(stock_symbol.upper())
+    if snapshot_date:
+        query += " AND snapshot_date >= ?"
+        params.append(snapshot_date)
         
     query += " ORDER BY year_month DESC"
     
@@ -521,7 +625,7 @@ def get_monthly_snapshots(year_month=None, stock_symbol=None):
     return [dict(row) for row in rows]
 
 
-def update_monthly_snapshot(year_month, stock_symbol, start_quantity=None, start_price=None):
+def update_monthly_snapshot(year_month, stock_symbol, start_quantity=None, start_price=None, snapshot_date=None):
     """Update an existing monthly snapshot."""
     conn = get_connection()
     cursor = conn.cursor()
@@ -532,6 +636,9 @@ def update_monthly_snapshot(year_month, stock_symbol, start_quantity=None, start
     if start_price is not None:
         fields.append("start_price = ?")
         values.append(start_price)
+    if snapshot_date is not None:
+        fields.append("snapshot_date = ?")
+        values.append(snapshot_date)
         
     if not fields:
         print("⚠️  No fields to update!")
@@ -569,28 +676,34 @@ def delete_monthly_snapshot(year_month, stock_symbol):
 #  MONTHLY PNL CRUD
 # ══════════════════════════════════════════════════════════════
 
-def insert_monthly_pnl(year_month, open_bal, income, expenses, stock_pnl, dividend):
+def insert_monthly_pnl( open_bal, income, expenses, stock_pnl, dividend, year_month = None,pnl_date=None):
+    """Insert or update a monthly PnL entry."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    if pnl_date is None:
+        if year_month:
+            pnl_date = convertYearMonth(year_month)
+        else:
+            pnl_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # Default to current date if neither is provided
+            year_month = datetime.now().strftime("%Y-%m")  # Default to current month if year_month is not provided'
+    else:
+        pnl_date, year_month = get_month_str(pnl_date)
+    cursor.execute("""
+        INSERT OR REPLACE INTO monthly_pnl (
+            year_month, open_bal, income, expenses, stock_pnl, dividend, pnl_date
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (year_month, open_bal, income, expenses, stock_pnl, dividend, pnl_date))
+    conn.commit()
+    conn.close()
 
-    if not (year_month is None or 0):
-        """Insert or update a monthly PnL entry."""
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT OR REPLACE INTO monthly_pnl (
-                year_month, open_bal, income, expenses, stock_pnl, dividend
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (year_month, open_bal, income, expenses, stock_pnl, dividend))
-        conn.commit()
-        conn.close()
-
-def get_monthly_pnl(year_month=None):
+def get_monthly_pnl(year_month=None, pnl_date=None):
     """Get all monthly PnL entries, optionally filtered by year_month."""
     conn = get_connection()
     cursor = conn.cursor()
     
     query = """
-        SELECT year_month, open_bal, income, expenses, stock_pnl, dividend, monthly_gl, close_bal
+        SELECT pnl_date, year_month, open_bal, income, expenses, stock_pnl, dividend, monthly_gl, close_bal
         FROM monthly_pnl
         WHERE 1=1
     """
@@ -599,6 +712,9 @@ def get_monthly_pnl(year_month=None):
     if year_month:
         query += " AND year_month = ?"
         params.append(year_month)
+    if pnl_date:
+        query += " AND pnl_date >= ?"
+        params.append(pnl_date)
         
     query += " ORDER BY year_month DESC"
     
@@ -607,7 +723,7 @@ def get_monthly_pnl(year_month=None):
     conn.close()
     return [dict(row) for row in rows]
 
-def update_monthly_pnl(year_month, open_bal=None, income=None, expenses=None, stock_pnl=None, dividend=None):
+def update_monthly_pnl(year_month, open_bal=None, income=None, expenses=None, stock_pnl=None, dividend=None, pnl_date=None):
     """Update an existing monthly PnL entry."""
     conn = get_connection()
     cursor = conn.cursor()
@@ -627,6 +743,9 @@ def update_monthly_pnl(year_month, open_bal=None, income=None, expenses=None, st
     if dividend is not None:
         fields.append("dividend = ?")
         values.append(dividend)
+    if pnl_date is not None:
+        fields.append("pnl_date >= ?")
+        values.append(pnl_date)
         
     if not fields:
         print("⚠️  No fields to update!")
@@ -664,25 +783,33 @@ def delete_monthly_pnl(year_month):
 #  MORTGAGE CRUD
 # ══════════════════════════════════════════════════════════════
 
-def insert_mortgage_monthly(year_month, principal, interest, remaining_balance):
+def insert_mortgage_monthly( principal, interest, remaining_balance,year_month=None, period=None):
     """Insert or update a mortgage monthly entry."""
     conn = get_connection()
     cursor = conn.cursor()
+    if period is None:
+        if year_month:
+            period = convertYearMonth(year_month)
+        else:
+            period = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # Default to current date if neither is provided
+            year_month = datetime.now().strftime("%Y-%m")  # Default to current month if year_month is not provided
+    else:
+        period, year_month = get_month_str(period)
     cursor.execute("""
-        INSERT OR REPLACE INTO mortgage (year_month, principal, interest, remaining_balance)
-        VALUES (?, ?, ?, ?)
-    """, (year_month, principal, interest, remaining_balance))
+        INSERT OR REPLACE INTO mortgage (year_month, principal, interest, remaining_balance, period)
+        VALUES (?, ?, ?, ?, ?)
+    """, (year_month, principal, interest, remaining_balance, period))
     conn.commit()
     print(f"✅ Mortgage monthly entry for '{year_month}' added!")
     conn.close()
 
-def get_mortgage_monthly(year_month=None):
+def get_mortgage_monthly(year_month=None, period=None):
     """Get all mortgage monthly entries, optionally filtered by year_month."""
     conn = get_connection()
     cursor = conn.cursor()
     
     query = """
-        SELECT year_month, principal, interest, total_payment, remaining_balance
+        SELECT period, year_month, principal, interest, total_payment, remaining_balance
         FROM mortgage
         WHERE 1=1
     """
@@ -691,6 +818,9 @@ def get_mortgage_monthly(year_month=None):
     if year_month:
         query += " AND year_month = ?"
         params.append(year_month)
+    if period:
+        query += " AND period >= ?"
+        params.append(period)
         
     query += " ORDER BY year_month DESC"
     
@@ -699,7 +829,7 @@ def get_mortgage_monthly(year_month=None):
     conn.close()
     return [dict(row) for row in rows]
 
-def update_mortgage_monthly(year_month, principal=None, interest=None, remaining_balance=None):
+def update_mortgage_monthly(year_month, principal=None, interest=None, remaining_balance=None, period=None):
     """Update an existing mortgage monthly entry."""
     conn = get_connection()
     cursor = conn.cursor()
@@ -713,6 +843,9 @@ def update_mortgage_monthly(year_month, principal=None, interest=None, remaining
     if remaining_balance is not None:
         fields.append("remaining_balance = ?")
         values.append(remaining_balance)
+    if period is not None:
+        fields.append("period = ?")
+        values.append(period)
         
     if not fields:
         print("⚠️  No fields to update!")
@@ -794,6 +927,9 @@ def get_ledger_entries(start_date=None, end_date=None, type=None, category=None,
     if month_str:
         query += " AND month_str = ?"
         params.append(month_str)
+    if start_date:
+        query += " AND datetime >= ?"
+        params.append(start_date)
         
     query += " ORDER BY datetime DESC"
     
@@ -858,47 +994,73 @@ def delete_ledger_entry(entry_id):
 #  SEED SAMPLE DATA & MAIN
 # ══════════════════════════════════════════════════════════════
 if __name__ == "__main__":
+    # Example usage of CRUD operations for each table
     '''
-    # Insert sample data into all tables
-    insert_stock("AAPL", "Apple Inc.", "Technology", "USD")
-    insert_portfolio("AAPL", 10, 150.0, "2023-10-01 10:00:00")
-    insert_transaction("AAPL", "BUY", 10, 150.0, "Initial purchase", "2023-10-01 10:00:00")
-    insert_watchlist("AAPL", 200.0, "Monitor for price increase")
-    insert_dividend("AAPL", 0.5, 10, "2023-10-15 10:00:00")
-    insert_monthly_snapshot("2023-10", "AAPL", 10, 150.0)
-    
-    insert_monthly_pnl("2023-10", 1000.0, 200.0, 50.0, 150.0, 5.0)
-    
-    insert_mortgage_monthly("2023-10", 500.0, 50.0, 9500.0)
-    insert_ledger_entry("E", "Utilities", 100.0, "2023-10-05 12:00:00", "Electricity bill")
+    # STOCKS CRUD
+    print("=== STOCKS ===")
 
-    # Retrieve data from all tables
+
+    # STOCKS CRUD
+    print("=== STOCKS ===")
+    print(insert_stock("MSFT", "Microsoft Corporation", "Technology", "USD"))
+    print(get_stock("MSFT"))  # Assuming get_stock is implemented to fetch stock details
+    update_stock("MSFT", name="Microsoft Corp", sector="Tech")
+    #delete_stock("MSFT")
+
+    # PORTFOLIO CRUD
+    print("=== PORTFOLIO ===")
+    insert_portfolio("AAPL", 10, 150.0, "2023-10-01 12:00:00")
     print(get_portfolio())
+    update_portfolio(1, quantity=20, avg_buy_price=155.0)
+    #delete_portfolio(1)
+
+    # TRANSACTIONS CRUD
+    print("=== TRANSACTIONS ===")
+    insert_transaction("AAPL", "BUY", 10, 150.0, "Initial purchase")
     print(get_transactions("2023-10"))
+    update_transaction(1, quantity=15, price=152.0)
+    #delete_transaction(1)
+
+    # WATCHLIST CRUD
+    print("=== WATCHLIST ===")
+    insert_watchlist("AAPL", 200.0, "Monitor for breakout")
     print(get_watchlist())
-    print(get_dividends("AAPL", "2023-10"))
-    print(get_monthly_snapshots("2023-10"))
-    print(get_monthly_pnl("2023-10"))
-    print(get_mortgage_monthly("2023-10"))
-    print(get_ledger_entries(month_str="2023-10"))
+    update_watchlist("AAPL", target_price=210.0)
+    #delete_watchlist("AAPL")
 
-    # Update data in all tables
-    update_portfolio(1, quantity=15, avg_buy_price=155.0)
-    update_transaction(1, quantity=12, price=152.0)
-    update_watchlist("AAPL", target_price=210.0, notes="Updated target price")
+    # DIVIDENDS CRUD
+    print("=== DIVIDENDS ===")
+    insert_dividend("AAPL", 0.5, 10, "2023-10-15")
+    print(get_dividends("AAPL"))
     update_dividend(1, amount_per_share=0.6)
-    update_monthly_snapshot("2023-10", "AAPL", start_quantity=12, start_price=155.0)
-    update_monthly_pnl("2023-10", income=250.0)
-    update_mortgage_monthly("2023-10", principal=550.0)
-    update_ledger_entry(1, amount=120.0, comment="Updated electricity bill")
+    #delete_dividend(1)
 
-    # Delete a row from all tables
-    delete_portfolio(1)
-    delete_transaction(1)
-    delete_watchlist("AAPL")
-    delete_dividend(1)
-    delete_monthly_snapshot("2023-10", "AAPL")
-    delete_monthly_pnl("2023-10")
-    delete_mortgage_monthly("2023-10")
-    delete_ledger_entry(1)
+    # MONTHLY SNAPSHOTS CRUD
+    print("=== MONTHLY SNAPSHOTS ===")
+    insert_monthly_snapshot("AAPL", 10, 150.0, "2023-10")
+    print(get_monthly_snapshots("2023-10"))
+    update_monthly_snapshot("2023-10", "AAPL", start_quantity=15)
+    #delete_monthly_snapshot("2023-10", "AAPL")
+
+    # MONTHLY PNL CRUD
+    print("=== MONTHLY PNL ===")
+    insert_monthly_pnl(1000, 500, 200, 300, 50, "2023-10")
+    print(get_monthly_pnl("2023-10"))
+    update_monthly_pnl("2023-10", income=600)
+    #delete_monthly_pnl("2023-10")
+
+    # MORTGAGE CRUD
+    print("=== MORTGAGE ===")
+    insert_mortgage_monthly(1000, 200, 800, "2023-10")
+    print(get_mortgage_monthly("2023-10"))
+    update_mortgage_monthly("2023-10", principal=1100)
+    #delete_mortgage_monthly("2023-10")
+
+    # LEDGER CRUD
+    print("=== LEDGER ===")
+    insert_ledger_entry("E", "Rent", 1000, "2023-10-01 12:00:00", "Monthly rent")
+    print(get_ledger_entries(month_str="2023-10"))
+    update_ledger_entry(1, amount=1200)
+    #delete_ledger_entry(1)
     '''
+    #insert_transaction("0941.HK", "BUY", 1000, 81.7, "purchase")
