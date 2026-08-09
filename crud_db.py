@@ -698,6 +698,8 @@ def insert_monthly_pnl( open_bal, income, expenses, stock_pnl, dividend, year_mo
     conn.close()
 
 def get_monthly_pnl(year_month=None, pnl_date=None):
+    #if pnl_date:
+    #    pnl_date = datetime.strptime(pnl_date, "%d/%m/%Y %H:%M").strftime("%d/%m/%Y %H:%M")
     """Get all monthly PnL entries, optionally filtered by year_month."""
     conn = get_connection()
     cursor = conn.cursor()
@@ -717,7 +719,8 @@ def get_monthly_pnl(year_month=None, pnl_date=None):
         params.append(pnl_date)
         
     query += " ORDER BY year_month DESC"
-    
+    print(f"Executing query: {query} with params: {params}")  # Debugging line
+
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
