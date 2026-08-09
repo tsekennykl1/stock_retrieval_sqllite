@@ -37,6 +37,19 @@ def lambda_handler(event, context):
     AWS Lambda entry point.
     Expects 'start_date' in the event payload.
     """
+    
+    # ✅ Correct way to read query string parameters for HTTP API
+    params = event.get('queryStringParameters') or {}
+    start_date = params.get('start_date')
+
+    if not start_date:
+        return {
+            'statusCode': 400,
+            'body': json.dumps({'error': "Missing 'start_date' in the request."})
+        }
+    
+    # rest of your logic...
+
     start_date = event.get('start_date', None)
     if not start_date:
         return {
