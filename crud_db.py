@@ -242,12 +242,16 @@ def get_portfolio():
     """Get full portfolio with stock details."""
     conn = get_connection()
     cursor = conn.cursor()
+
+
     cursor.execute("""
-        SELECT p.id, s.symbol, s.name, s.sector, p.quantity,
-               p.avg_buy_price, p.trading_date, p.total_invested, p.updated_at
-        FROM portfolio p
-        JOIN stocks s ON p.stock_symbol = s.symbol
-        ORDER BY p.total_invested DESC
+        SELECT stock_symbol, quantity, avg_buy_price, total_invested
+        FROM portfolio
+        WHERE trading_date = (
+            SELECT MAX(trading_date)
+            FROM portfolio AS sub
+            WHERE sub.stock_symbol = portfolio.stock_symbol
+        )
     """)
     rows = cursor.fetchall()
     conn.close()
@@ -260,16 +264,22 @@ def get_latest_portfolio():
     cursor = conn.cursor()
     cursor.execute("""
         SELECT p.stock_symbol, s.name as stock_name, MAX(p.trading_date) as latest_trading_date,
-               AVG(p.avg_buy_price) as average_price, SUM(p.quantity) as total_quantity
+               AVG(p.avg_buy_price) as average_price, SUM(p.quantity) as total_quantity, p.total_invested
         FROM portfolio p
         JOIN stocks s ON p.stock_symbol = s.symbol
-        WHERE p.quantity > 0
+        WHERE p.quantity > 0 AND p.trading_date = (
+            SELECT MAX(trading_date)
+            FROM portfolio AS sub
+            WHERE sub.stock_symbol = p.stock_symbol
+        )
         GROUP BY p.stock_symbol, s.name
         ORDER BY latest_trading_date DESC
     """)
     rows = cursor.fetchall()
     conn.close()
+
     return [dict(row) for row in rows]
+
 
 # ══════════════════════════════════════════════════════════════
 #  TRANSACTIONS CRUD

@@ -5,39 +5,8 @@ def get_connection():
     conn = sqlite3.connect("mystocks.db")
     conn.row_factory = sqlite3.Row
     return conn
-    def update_mortgage_table():
-        """Update the mortgage table schema to replace the virtual column with a regular column."""
-        conn = get_connection()
-        cursor = conn.cursor()
- 
-        # Rename the existing table
-        cursor.execute("ALTER TABLE mortgage RENAME TO mortgage_old")
 
-        # Create the new table without the virtual column
-        cursor.execute("""
-            CREATE TABLE mortgage (
-                period DATETIME DEFAULT CURRENT_TIMESTAMP,
-                year_month TEXT NOT NULL PRIMARY KEY,
-                principal REAL NOT NULL,
-                interest REAL NOT NULL,
-                total_payment REAL NOT NULL,
-                remaining_balance REAL NOT NULL
-            )
-        """)
 
-        # Copy data from the old table to the new table
-        cursor.execute("""
-            INSERT INTO mortgage (period, year_month, principal, interest, total_payment, remaining_balance)
-            SELECT period, year_month, principal, interest, (principal + interest) AS total_payment, remaining_balance
-            FROM mortgage_old
-        """)
-
-        # Drop the old table
-        cursor.execute("DROP TABLE mortgage_old")
-
-        conn.commit()
-        conn.close()
-        print("✅ Mortgage table updated successfully!")
 def create_tables():
     """Create all stock portfolio tables."""
     conn = get_connection()
@@ -67,8 +36,6 @@ def create_tables():
             avg_buy_price   REAL NOT NULL,
             total_invested  REAL GENERATED ALWAYS AS (quantity * avg_buy_price) VIRTUAL,
             transaction_reference_id INTEGER,
-            created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (stock_symbol) REFERENCES stocks(symbol) ON DELETE CASCADE,
             FOREIGN KEY (transaction_reference_id) REFERENCES transactions(id) ON DELETE CASCADE
         )

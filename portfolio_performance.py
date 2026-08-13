@@ -8,24 +8,6 @@ from crud_db import get_latest_portfolio
 API_URL = "https://z35lnmmzgi.execute-api.ap-east-1.amazonaws.com/prod/stocks?stocks="
 DB_NAME = "mystocks.db"
 
-def get_portfolio_holdings():
-    """Retrieve all portfolio holdings from the database."""
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT stock_symbol, quantity, avg_buy_price, total_invested
-        FROM portfolio
-        WHERE trading_date = (
-            SELECT MAX(trading_date)
-            FROM portfolio AS sub
-            WHERE sub.stock_symbol = portfolio.stock_symbol
-        )
-    """)
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
-
 def fetch_current_prices(symbols):
     """Fetch current stock prices from the API."""
     if not symbols:
@@ -65,6 +47,7 @@ def fetch_current_prices(symbols):
 
 def get_portfolio_performance_json(print_html=False):
     holdings = get_latest_portfolio()
+
     if not holdings:
         return json.dumps({"message": "Portfolio is empty.", "holdings": [], "summary": {}})
 
@@ -89,8 +72,12 @@ def get_portfolio_performance_json(print_html=False):
 
     for item in holdings:
         symbol = item['stock_symbol']
-        qty = float(item['quantity'])
-        avg_price = float(item['avg_buy_price'])
+        qty = float(item['total_quantity'])
+        avg_price = float(item['average_price'])
+
+
+
+
         invested = float(item['total_invested'])
         
         curr_price = prices.get(symbol, 0.0)
