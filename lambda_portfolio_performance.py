@@ -5,13 +5,13 @@ import requests
 
 STOCK_API_URL = os.environ.get(
     "STOCK_API_URL",
-    "https://z35lnmmzgi-vpce-0d04c1826144505c3.execute-api.ap-east-1.vpce.amazonaws.com/prod/stocks"
+    "https://z35lnmmzgi.execute-api.ap-east-1.amazonaws.com/prod/stocks"  # ✅ Fixed URL
 )
 
 def fetch_stock_prices(stocks: list) -> dict:
     params = {"stocks": ",".join(stocks)}
     headers = {
-        "x-apigw-api-id": "z35lnmmzgi"   # ← Add this header
+        "x-apigw-api-id": "z35lnmmzgi"
     }
     
     print(f"Fetching prices from API: {STOCK_API_URL}?stocks={params['stocks']}...")
@@ -31,7 +31,6 @@ def get_holding(print_html=False):
     if not holdings:
         return json.dumps({"message": "Portfolio is empty.", "holdings": [], "summary": {}})
 
-    # Extract symbols for API call
     symbols = [holding['stock_symbol'] for holding in holdings]
     prices_dict = fetch_stock_prices(symbols)
 
@@ -39,7 +38,6 @@ def get_holding(print_html=False):
     for symbol in symbols:
         price_info = prices_dict.get(symbol, {})
         if isinstance(price_info, dict):
-            # Adjust the key based on the actual API response structure
             prices[symbol] = float(price_info.get('price', 0.0))
         else:
             try:
@@ -60,12 +58,10 @@ def get_holding(print_html=False):
         print(f"{'Symbol':<10} | {'Qty':<10} | {'Avg Price':<10} | {'Curr Price':<10} | {'Invested':<12} | {'Curr Value':<12} | {'G/L ($)':<10} | {'G/L (%)':<8}")
         print("-" * 95)
 
-
     for item in holdings:
         symbol = item['stock_symbol']
         qty = float(item['total_quantity'])
         avg_price = float(item['average_price'])
-
         invested = float(item['total_invested'])
         
         curr_price = prices.get(symbol, 0.0)
@@ -94,7 +90,6 @@ def get_holding(print_html=False):
     portfolio_gl_amount = total_current_value_portfolio - total_invested_portfolio
     portfolio_gl_pct = (portfolio_gl_amount / total_invested_portfolio * 100) if total_invested_portfolio > 0 else 0.0
 
-
     if print_html:
         print("-" * 95)
         print(f"{'TOTALS':<48} | {total_invested_portfolio:<12.2f} | {total_current_value_portfolio:<12.2f} | {portfolio_gl_amount:<10.2f} | {portfolio_gl_pct:>7.2f}%")
@@ -110,11 +105,9 @@ def get_holding(print_html=False):
     return json.dumps(result, indent=4)
 
 
-
 def lambda_handler(event, context):
     """AWS Lambda handler to retrieve portfolio performance."""
     try:
-        # Call the function to get portfolio performance
         performance_data = get_holding(print_html=False)
         return {
             "statusCode": 200,
@@ -131,7 +124,3 @@ def lambda_handler(event, context):
                 "Content-Type": "application/json"
             }
         }
-
-
-
-
