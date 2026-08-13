@@ -1,4 +1,5 @@
 import sqlite3
+print(sqlite3.sqlite_version)  # Should be 3.31.0+ for generated columns
 
 def get_connection():
     """Establish and return a connection to the SQLite database."""
@@ -145,5 +146,10 @@ def create_tables():
 
 if __name__ == "__main__":
     create_tables()
+    conn = sqlite3.connect("your_database.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT sql FROM sqlite_master WHERE name = 'mortgage';")
+    print(cursor.fetchone())
+
     print("\n🎉 Database setup complete!")
     

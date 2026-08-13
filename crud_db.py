@@ -56,29 +56,21 @@ def get_connection():
 #  STOCKS CRUD
 # ══════════════════════════════════════════════════════════════
 
-def insert_mortgage_monthly(principal, interest, remaining_balance, year_month=None, period=None):
-    """Insert or update a mortgage monthly entry."""
+def insert_stock(symbol, name, sector, currency):
+    """Insert a new stock into the stocks table."""
     conn = get_connection()
     cursor = conn.cursor()
-    if period is None:
-        if year_month:
-            period = convertYearMonth(year_month)
-        else:
-            period = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # Default to current date if neither is provided
-            year_month = datetime.now().strftime("%Y-%m")  # Default to current month if year_month is not provided
-    else:
-        period, year_month = get_month_str(period)
-    
-    # Calculate total payment
-    total_payment = principal + interest
-    
-    cursor.execute("""
-        INSERT OR REPLACE INTO mortgage (year_month, principal, interest, total_payment, remaining_balance, period)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (year_month, principal, interest, total_payment, remaining_balance, period))
-    conn.commit()
-    print(f"✅ Mortgage monthly entry for '{year_month}' added!")
-    conn.close()
+    try:
+        cursor.execute("""
+            INSERT INTO stocks (symbol, name, sector, currency)
+            VALUES (?, ?, ?, ?)
+        """, (symbol.upper(), name, sector, currency))
+        conn.commit()
+        print(f"✅ Stock '{symbol.upper()}' added!")
+    except sqlite3.IntegrityError:
+        print(f"⚠️  Stock '{symbol.upper()}' already exists!")
+    finally:
+        conn.close()
 
 def get_stock(symbol):
     """Retrieve a stock's details by its symbol."""
@@ -798,7 +790,7 @@ def delete_monthly_pnl(year_month):
     else:
         print(f"🗑️  PnL entry for '{year_month}' deleted!")
     conn.close()
-
+'''
 # ══════════════════════════════════════════════════════════════
 #  MORTGAGE CRUD
 # ══════════════════════════════════════════════════════════════
@@ -898,7 +890,7 @@ def delete_mortgage_monthly(year_month):
     else:
         print(f"🗑️  Mortgage monthly entry for '{year_month}' deleted!")
     conn.close()
-
+'''
 # ══════════════════════════════════════════════════════════════
 #  LEDGER CRUD
 # ══════════════════════════════════════════════════════════════
