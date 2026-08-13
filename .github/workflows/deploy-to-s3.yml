@@ -183,7 +183,7 @@ jobs:
           deploy_lambda "lambda_portfolio_performance" 2 \
             "DB_PATH=/mnt/efs/mystocks.db" \
             "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
-            "lambda_portfolio_performance.py" "crud_db.py"
+            "lambda_portfolio_performance.py" "crud_db.py" "portfolio_performance.py"
 
       # ── Trigger S3-to-EFS copy Lambda ──────────────────────────────────────
       - name: Trigger S3-to-EFS copy Lambda
