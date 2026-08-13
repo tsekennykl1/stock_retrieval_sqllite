@@ -165,17 +165,23 @@ jobs:
             echo "✅ Done: $FUNCTION_NAME"
           }
 
-          # ── Deploy lambda_monthly_pnl (2 env vars, 2 files) ───────────────
-          deploy_lambda "lambda_monthly_pnl" 2 \
+            # ── Deploy lambda_monthly_pnl (2 env vars, 2 files) ───────────────
+            deploy_lambda "lambda_monthly_pnl" 2 \
             "DB_PATH=/mnt/efs/mystocks.db" \
             "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
             "lambda_monthly_pnl.py" "crud_db.py"
 
-          # ── Deploy lambda_s3_to_efs (2 env vars, 1 file) ──────────────────
-          deploy_lambda "lambda_s3_to_efs" 2 \
+            # ── Deploy lambda_s3_to_efs (2 env vars, 1 file) ──────────────────
+            deploy_lambda "lambda_s3_to_efs" 2 \
             "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
             "EFS_PATH=/mnt/efs" \
             "lambda_s3_to_efs.py"
+
+            # ── Deploy lambda_portfolio_performance (2 env vars, 2 files) ─────
+            deploy_lambda "lambda_portfolio_performance" 2 \
+            "DB_PATH=/mnt/efs/mystocks.db" \
+            "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
+            "portfolio_performance.py" "crud_db.py"
 
       # ── Trigger S3-to-EFS copy Lambda ──────────────────────────────────────
       - name: Trigger S3-to-EFS copy Lambda

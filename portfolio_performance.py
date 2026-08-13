@@ -1,7 +1,23 @@
 import sqlite3
 import requests
 import json
-
+import boto3
+from botocore.exceptions import ClientError
+def lambda_handler(event, context):
+    """AWS Lambda function to retrieve portfolio performance."""
+    try:
+        # Call the function to get portfolio performance
+        portfolio_performance = get_portfolio_performance_json(print_html=False)
+        return {
+            "statusCode": 200,
+            "body": portfolio_performance
+        }
+    except Exception as e:
+        print(f"Error: {e}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"message": "An error occurred.", "error": str(e)})
+        }
 API_URL = "https://z35lnmmzgi.execute-api.ap-east-1.amazonaws.com/prod/stocks?stocks="
 DB_NAME = "mystocks.db"
 
