@@ -78,13 +78,17 @@ def get_holding(print_html=False):
 
         result["holdings"].append({
             "symbol": symbol,
+            "shortName_en": item.get('shortName_en', ''),
             "quantity": round(qty, 2),
             "avg_price": round(avg_price, 2),
             "current_price": round(curr_price, 2),
             "total_invested": round(invested, 2),
             "current_value": round(curr_value, 2),
             "gain_loss_amount": round(gl_amount, 2),
-            "gain_loss_percentage": round(gl_pct, 2)
+            "gain_loss_percentage": round(gl_pct, 2),
+            "last_updated": item.get('last_updated', '')   #,
+            #"sector": item.get('sector', ''),
+          
         })
 
     portfolio_gl_amount = total_current_value_portfolio - total_invested_portfolio
