@@ -3,6 +3,7 @@ import requests
 import json
 import boto3
 from botocore.exceptions import ClientError
+from crud_db import get_latest_portfolio
 
 API_URL = "https://z35lnmmzgi.execute-api.ap-east-1.amazonaws.com/prod/stocks?stocks="
 DB_NAME = "mystocks.db"
@@ -63,7 +64,7 @@ def fetch_current_prices(symbols):
 
 
 def get_portfolio_performance_json(print_html=False):
-    holdings = get_portfolio_holdings()
+    holdings = get_latest_portfolio()
     if not holdings:
         return json.dumps({"message": "Portfolio is empty.", "holdings": [], "summary": {}})
 
