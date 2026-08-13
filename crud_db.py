@@ -4,12 +4,13 @@ from calendar import monthrange
 import os
 
 # Dynamically set DB path (Defaults to local mystocks.db, overwritten in Lambda)
+
 DB_PATH = "mystocks.db"
 if "AWS_LAMBDA_FUNCTION_NAME" in os.environ:
     DB_PATH = os.environ.get("DB_PATH", "/tmp/mystocks.db")
 
 
-print(f"Using database path: {DB_PATH}")
+# CRUD for all table operations
 def get_month_str(_date=None):
     """Convert a transaction date to 'yyyy-mm' format, or use the current date if not provided."""
     if _date:

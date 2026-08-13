@@ -4,7 +4,7 @@
 *.xlsx
 *.xlsm
 *.xlsb
-
+layer/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

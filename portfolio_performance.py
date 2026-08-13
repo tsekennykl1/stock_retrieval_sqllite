@@ -75,9 +75,6 @@ def get_portfolio_performance_json(print_html=False):
         qty = float(item['total_quantity'])
         avg_price = float(item['average_price'])
 
-
-
-
         invested = float(item['total_invested'])
         
         curr_price = prices.get(symbol, 0.0)

@@ -15,7 +15,7 @@ def create_tables():
     conn.execute("PRAGMA foreign_keys = ON")
     cursor = conn.cursor()
 
-    # ── Table 1: Stocks (Master list of stocks) ──────────────────────────
+    # ── Table 1: Stocks (Master list of stocks) ──────────────────---────────
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS stocks (
             symbol      TEXT PRIMARY KEY,        -- e.g. AAPL, TSLA (Now the PK)
