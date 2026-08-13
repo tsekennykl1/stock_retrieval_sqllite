@@ -223,3 +223,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+.venv/
+node_modules/
+__pycache__/
+*.zip
+*.sqlite
+*.db
+
