@@ -145,18 +145,34 @@ jobs:
               exit 1
             fi
 
-            # ✅ FIX: Export SG_ID alongside SUBNET_JSON so python can read it
-            export SG_ID="$VPC_SECURITY_GROUP_ID"
-            export SUBNET_JSON="$(CSV="$VPC_SUBNET_IDS" to_json_array_from_csv)"
-            
             python3 - <<PY >"/tmp/${function_name}_vpc.json"
-          import json,sys,os
-          subnet_ids = json.loads(os.environ["SUBNET_JSON"])
-          sg_id = os.environ["SG_ID"]
-          print(json.dumps({"SubnetIds": subnet_ids, "SecurityGroupIds":[sg_id]}))
+          import json, os, re, sys
+
+          raw_subnets = os.environ["VPC_SUBNET_IDS"]
+          sg_id = os.environ["VPC_SECURITY_GROUP_ID"].strip()
+
+          subnet_ids = [s.strip() for s in raw_subnets.split(",") if s.strip()]
+
+          if not subnet_ids:
+              print("No subnet IDs provided", file=sys.stderr)
+              sys.exit(1)
+
+          for subnet in subnet_ids:
+              if not re.match(r"^subnet-[0-9a-fA-F]+$", subnet):
+                  print(f"Invalid subnet ID: {subnet}", file=sys.stderr)
+                  sys.exit(1)
+
+          if not re.match(r"^sg-[0-9a-fA-F]+$", sg_id):
+              print(f"Invalid security group ID: {sg_id}", file=sys.stderr)
+              sys.exit(1)
+
+          print(json.dumps({
+              "SubnetIds": subnet_ids,
+              "SecurityGroupIds": [sg_id]
+          }))
           PY
-          }
-         
+          }         
+          
           write_efs_json () {
             local function_name="$1"
 
