@@ -1,29 +1,31 @@
 import json
 from crud_db import get_latest_portfolio
-import os
-import requests
+import boto3
 
-STOCK_API_URL = os.environ.get(
-    "STOCK_API_URL",
-    "https://z35lnmmzgi.execute-api.ap-east-1.amazonaws.com/prod/stocks"  # ✅ Fixed URL
-)
+lambda_client = boto3.client('lambda', region_name='ap-east-1')
 
-def fetch_stock_prices(stocks: list) -> dict:
-    params = {"stocks": ",".join(stocks)}
-    headers = {
-        "x-apigw-api-id": "z35lnmmzgi"
+
+def invoke_stock_retrieval(stocks: list) -> dict:
+    payload = {                                     # ✅ build correct payload
+        "queryStringParameters": {
+            "stocks": ",".join(stocks)              # ✅ e.g. "0700.HK,9988.HK,0005.HK"
+        }
     }
-    
-    print(f"Fetching prices from API: {STOCK_API_URL}?stocks={params['stocks']}...")
-    
-    response = requests.get(STOCK_API_URL, params=params, headers=headers, timeout=25)
-    
-    if response.status_code == 200:
-        print(f"✅ Prices fetched successfully")
-        return response.json()
-    else:
-        print(f"Failed to fetch prices. Status Code: {response.status_code}")
-        return {}
+    response = lambda_client.invoke(
+        FunctionName='stock_retrieval_lambda',
+        InvocationType='RequestResponse',
+        Payload=json.dumps(payload).encode()        # ✅ send stocks in payload
+    )
+    result = json.loads(response['Payload'].read())
+    if response.get('FunctionError'):               # ✅ catch Lambda-level errors
+        raise Exception(f"stock_retrieval_lambda error: {result}")
+    if 'body' in result:                            # ✅ unwrap API Gateway response format
+        return json.loads(result['body'])
+    return result
+
+
+
+
 
 def get_holding(print_html=False):
     holdings = get_latest_portfolio()
@@ -32,7 +34,7 @@ def get_holding(print_html=False):
         return json.dumps({"message": "Portfolio is empty.", "holdings": [], "summary": {}})
 
     symbols = [holding['stock_symbol'] for holding in holdings]
-    prices_dict = fetch_stock_prices(symbols)
+    prices_dict = invoke_stock_retrieval(symbols)   # ✅ direct Lambda invoke, no internet
 
     prices = {}
     for symbol in symbols:
@@ -78,7 +80,7 @@ def get_holding(print_html=False):
 
         result["holdings"].append({
             "symbol": symbol,
-            "shortName_en": item.get('shortName_en', ''),
+            "shortName_en": prices_dict.get(symbol, {}).get('shortName_en', item.get('shortName_en', '')),
             "quantity": round(qty, 2),
             "avg_price": round(avg_price, 2),
             "current_price": round(curr_price, 2),
@@ -88,7 +90,6 @@ def get_holding(print_html=False):
             "gain_loss_percentage": round(gl_pct, 2),
             "last_updated": item.get('last_updated', '')   #,
             #"sector": item.get('sector', ''),
-          
         })
 
     portfolio_gl_amount = total_current_value_portfolio - total_invested_portfolio

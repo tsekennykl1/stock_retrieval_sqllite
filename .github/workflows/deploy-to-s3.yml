@@ -29,12 +29,13 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
 
       # ── Upload mystocks.db and files to S3 (staging area) ──────────────────
-      - name: Upload SQLite DB to S3
-        env:
-          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
-        run: |
-          aws s3 cp mystocks.db "s3://${S3_BUCKET_NAME}/mystocks.db"
-          echo "✅ Database uploaded to S3 staging area"
+      # [COMMENTED OUT] Only run this the very first time to avoid overwriting production EFS db
+      # - name: Upload SQLite DB to S3
+      #   env:
+      #     S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
+      #   run: |
+      #     aws s3 cp mystocks.db "s3://${S3_BUCKET_NAME}/mystocks.db"
+      #     echo "✅ Database uploaded to S3 staging area"
 
       - name: Sync GitHub files to S3
         env:
@@ -186,30 +187,32 @@ jobs:
             "lambda_portfolio_performance.py" "crud_db.py" "portfolio_performance.py"
 
       # ── Trigger S3-to-EFS copy Lambda ──────────────────────────────────────
-      - name: Trigger S3-to-EFS copy Lambda
-        run: |
-          echo "🚀 Invoking lambda_s3_to_efs to copy mystocks.db to EFS..."
-
-          aws lambda invoke \
-            --function-name lambda_s3_to_efs \
-            --payload '{}' \
-            --cli-binary-format raw-in-base64-out \
-            response.json
-
-          echo "Lambda response:"
-          cat response.json
-
-          # Fail pipeline if Lambda returned non-200
-          STATUS=$(python3 -c "
-          import json
-          with open('response.json') as f:
-              d = json.load(f)
-          print(d.get('statusCode', 500))
-          ")
-
-          if [ "$STATUS" != "200" ]; then
-            echo "❌ S3-to-EFS copy failed with status: $STATUS"
-            exit 1
-          fi
-
-          echo "✅ mystocks.db successfully copied to EFS!"
+      # ── Trigger S3-to-EFS copy Lambda ──────────────────────────────────────
+      # [COMMENTED OUT] Only run this the very first time to avoid overwriting production EFS db
+      # - name: Trigger S3-to-EFS copy Lambda
+      #   run: |
+      #     echo "🚀 Invoking lambda_s3_to_efs to copy mystocks.db to EFS..."
+      #
+      #     aws lambda invoke \
+      #       --function-name lambda_s3_to_efs \
+      #       --payload '{}' \
+      #       --cli-binary-format raw-in-base64-out \
+      #       response.json
+      #
+      #     echo "Lambda response:"
+      #     cat response.json
+      #
+      #     # Fail pipeline if Lambda returned non-200
+      #     STATUS=$(python3 -c "
+      #     import json
+      #     with open('response.json') as f:
+      #         d = json.load(f)
+      #     print(d.get('statusCode', 500))
+      #     ")
+      #
+      #     if [ "$STATUS" != "200" ]; then
+      #       echo "❌ S3-to-EFS copy failed with status: $STATUS"
+      #       exit 1
+      #     fi
+      #
+      #     echo "✅ mystocks.db successfully copied to EFS!"

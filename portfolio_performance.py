@@ -8,6 +8,7 @@ from crud_db import get_latest_portfolio
 API_URL = "https://z35lnmmzgi.execute-api.ap-east-1.amazonaws.com/prod/stocks?stocks="
 DB_NAME = "mystocks.db"
 
+
 def fetch_current_prices(symbols):
     """Fetch current stock prices from the API."""
     if not symbols:
@@ -20,28 +21,23 @@ def fetch_current_prices(symbols):
     response = requests.get(url)
     
     if response.status_code == 200:
-        # Note: Adjust the parsing logic below depending on the exact JSON 
-        # structure returned by your AWS API Gateway.
-        # This assumes the API returns a dictionary like: {"0700.HK": 450.50, ...}
-        # OR {"0700.HK": {"price": 450.50}, ...}
         data = response.json()
         prices = {}
         for key, val in data.items():
-            if isinstance(val, dict) and 'price' in val:
-                prices[key] = float(val['price'])
-            elif isinstance(val, dict) and 'regularMarketPrice' in val:
-                prices[key] = float(val['regularMarketPrice'])
+            if isinstance(val, dict):
+                price = float(val.get('price', val.get('regularMarketPrice', 0.0)))
+                short_name = val.get('shortName_en', '')
+                prices[key] = {'price': price, 'shortName_en': short_name}
             else:
                 try:
-                    prices[key] = float(val)
+                    price = float(val)
                 except (TypeError, ValueError):
-                    prices[key] = 0.0
+                    price = 0.0
+                prices[key] = {'price': price, 'shortName_en': ''}
         return prices
     else:
         print(f"Failed to fetch prices. Status Code: {response.status_code}")
         return {}
-
-
 
 
 
@@ -77,7 +73,14 @@ def get_portfolio_performance_json(print_html=False):
 
         invested = float(item['total_invested'])
         
-        curr_price = prices.get(symbol, 0.0)
+        # ✅ Fetch stock_data dictionary instead of just a float
+        stock_data = prices.get(symbol, {})
+        curr_price = stock_data.get('price', 0.0)
+        api_short_name = stock_data.get('shortName_en', '')
+        
+        # Fallback to database stock_name if API doesn't provide it
+        final_short_name = api_short_name if api_short_name else item.get('stock_name', '')
+        
         curr_value = qty * curr_price
         
         gl_amount = curr_value - invested
@@ -91,6 +94,7 @@ def get_portfolio_performance_json(print_html=False):
 
         result["holdings"].append({
             "symbol": symbol,
+            "shortName_en": final_short_name,
             "quantity": round(qty, 2),
             "avg_price": round(avg_price, 2),
             "current_price": round(curr_price, 2),
@@ -101,6 +105,8 @@ def get_portfolio_performance_json(print_html=False):
         })
 
     portfolio_gl_amount = total_current_value_portfolio - total_invested_portfolio
+
+
     portfolio_gl_pct = (portfolio_gl_amount / total_invested_portfolio * 100) if total_invested_portfolio > 0 else 0.0
 
 
