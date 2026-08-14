@@ -145,7 +145,10 @@ jobs:
               exit 1
             fi
 
-            CSV="$VPC_SUBNET_IDS" SUBNET_JSON="$(to_json_array_from_csv)"
+            # ✅ FIX: Export SG_ID alongside SUBNET_JSON so python can read it
+            export SG_ID="$VPC_SECURITY_GROUP_ID"
+            export SUBNET_JSON="$(CSV="$VPC_SUBNET_IDS" to_json_array_from_csv)"
+            
             python3 - <<PY >"/tmp/${function_name}_vpc.json"
           import json,sys,os
           subnet_ids = json.loads(os.environ["SUBNET_JSON"])
@@ -153,7 +156,7 @@ jobs:
           print(json.dumps({"SubnetIds": subnet_ids, "SecurityGroupIds":[sg_id]}))
           PY
           }
-
+         
           write_efs_json () {
             local function_name="$1"
 
