@@ -30,7 +30,7 @@ def get_monthly_ledger(year_month):
     income_ledger = [entry for entry in ledger_entries if entry["type"] == "I"]
     expense_ledger = [entry for entry in ledger_entries if entry["type"] == "E"]
 
-    total_income = sum(entry["amount"] for entry in income_ledger)
+    total_income = sum(float(entry["amount"]) for entry in income_ledger)
     total_expense = sum(entry["amount"] for entry in expense_ledger)
 
     monthly_ledger = {

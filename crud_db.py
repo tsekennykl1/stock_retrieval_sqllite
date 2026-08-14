@@ -15,12 +15,7 @@ def get_month_str(_date=None):
     """Convert a transaction date to 'yyyy-mm' format, or use the current date if not provided."""
     if _date:
         if isinstance(_date, datetime):
-
-            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y-%m", "%Y/%m/%d", "%Y/%m"):
-                try:
-                    return datetime.strptime(_date, fmt).strftime("%Y-%m-%d %H:%M:%S"), datetime.strptime(_date, fmt).strftime("%Y-%m")
-                except ValueError:
-                    continue
+            return _date.strftime("%Y-%m-%d %H:%M:%S"), _date.strftime("%Y-%m")
 
         try:
             if isinstance(_date, str):
@@ -189,38 +184,6 @@ def update_portfolio(portfolio_id, quantity=None, avg_buy_price=None, trading_da
     conn.commit()
     conn.close()
 
-def update_portfolio(portfolio_id, quantity=None, avg_buy_price=None, trading_date=None, transaction_reference_id=None):
-    """Update portfolio holding for a stock."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    fields, values = [], []
-    if quantity is not None:      
-        fields.append("quantity = ?")
-        values.append(quantity)
-    if avg_buy_price is not None: 
-        fields.append("avg_buy_price = ?")
-        values.append(avg_buy_price)
-    if trading_date is not None:
-        fields.append("trading_date = ?")
-        values.append(trading_date)
-    if transaction_reference_id is not None:
-        fields.append("transaction_reference_id = ?")
-        values.append(transaction_reference_id)
-    
-    if not fields:
-        print("⚠️  No fields to update!")
-        return
-        
-    fields.append("updated_at = CURRENT_TIMESTAMP")
-    values.append(portfolio_id)
-    
-    cursor.execute(f"UPDATE portfolio SET {', '.join(fields)} WHERE id = ?", values)
-    if cursor.rowcount == 0:
-        print(f"⚠️  Portfolio entry with ID '{portfolio_id}' not found!")
-    else:
-        print(f"✅ Portfolio entry with ID '{portfolio_id}' updated!")
-    conn.commit()
-    conn.close()
 
 def delete_portfolio(portfolio_id):
     """Remove a stock from the portfolio."""
@@ -256,17 +219,22 @@ def get_latest_portfolio():
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT p.stock_symbol, s.name as stock_name, MAX(p.trading_date) as latest_trading_date,
-               AVG(p.avg_buy_price) as average_price, SUM(p.quantity) as total_quantity, p.total_invested
+        SELECT p.stock_symbol,
+            s.name AS stock_name,
+            p.trading_date AS latest_trading_date,
+            p.avg_buy_price AS average_price,
+            p.quantity AS total_quantity,
+            (p.quantity * p.avg_buy_price) AS total_invested
         FROM portfolio p
         JOIN stocks s ON p.stock_symbol = s.symbol
-        WHERE p.quantity > 0 AND p.trading_date = (
-            SELECT MAX(trading_date)
-            FROM portfolio AS sub
-            WHERE sub.stock_symbol = p.stock_symbol
-        )
-        GROUP BY p.stock_symbol, s.name
-        ORDER BY latest_trading_date DESC
+        JOIN (
+            SELECT stock_symbol, MAX(trading_date) AS max_date
+            FROM portfolio
+            GROUP BY stock_symbol
+        ) latest
+        ON p.stock_symbol = latest.stock_symbol AND p.trading_date = latest.max_date
+        WHERE p.quantity > 0
+        ORDER BY p.trading_date DESC
     """)
     rows = cursor.fetchall()
     conn.close()
@@ -728,8 +696,7 @@ def get_monthly_pnl(year_month=None, pnl_date=None):
         params.append(pnl_date)
         
     query += " ORDER BY year_month DESC"
-    print(f"Executing query: {query} with params: {params}")  # Debugging line
-
+  
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
@@ -756,7 +723,7 @@ def update_monthly_pnl(year_month, open_bal=None, income=None, expenses=None, st
         fields.append("dividend = ?")
         values.append(dividend)
     if pnl_date is not None:
-        fields.append("pnl_date >= ?")
+        fields.append("pnl_date = ?")
         values.append(pnl_date)
         
     if not fields:
@@ -939,9 +906,6 @@ def get_ledger_entries(start_date=None, end_date=None, type=None, category=None,
     if month_str:
         query += " AND month_str = ?"
         params.append(month_str)
-    if start_date:
-        query += " AND datetime >= ?"
-        params.append(start_date)
         
     query += " ORDER BY datetime DESC"
     

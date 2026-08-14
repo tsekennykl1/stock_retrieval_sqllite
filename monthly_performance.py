@@ -19,7 +19,7 @@ API_URL = "https://z35lnmmzgi.execute-api.ap-east-1.amazonaws.com/prod/stocks?st
 def fetch_current_prices(symbols):
     """Fetch current stock prices from the API."""
     if not symbols: return {}
-    response = requests.get(f"{API_URL}{','.join(symbols)}")
+    response = requests.get(f"{API_URL}{','.join(symbols)}", timeout=(3, 10))
     prices = {}
     if response.status_code == 200:
         data = response.json()
@@ -30,29 +30,6 @@ def fetch_current_prices(symbols):
                 try: prices[key] = float(val)
                 except (TypeError, ValueError): prices[key] = 0.0
     return prices
-
-def snapshot_beginning_of_month(year_month):
-    """Take a snapshot of the current portfolio to act as the beginning position."""
-    holdings = get_portfolio()
-    
-    if not holdings:
-        print("Portfolio is empty, nothing to snapshot.")
-        return
-
-    symbols = [h['symbol'] for h in holdings]
-    prices = fetch_current_prices(symbols)
-
-    for h in holdings:
-        symbol = h['symbol']
-        qty = h['quantity']
-        price = prices.get(symbol, 0.0)
-        
-        try:
-            insert_monthly_snapshot(year_month, symbol, qty, price)
-        except Exception as e:
-            print(f"Error snapshotting {symbol}: {e}")
-
-    print(f"✅ Snapshot for {year_month} saved successfully.")
 
 
 def calculate_monthly_performance(year_month, print_table=False):
@@ -184,17 +161,17 @@ def calculate_monthly_performance(year_month, print_table=False):
 
     return result
 
-def calculate_monthly_dividends(year_month):
+def calculate_monthly_dividends(year_month,print_table=False):
     """Calculate total dividends received for the given month."""
 
     dividends = get_dividends(year_month=year_month)
-    print(f"Retrieved {len(dividends)} dividend records for {year_month}.")
     total_dividends = 0.0
-
-    print(f"\n💰 Dividend Report for {year_month}")
-    print("=" * 50)
-    print(f"{'Symbol':<10} | {'Dividend':<10}")
-    print("-" * 50)
+    if print_table:
+        print(f"Retrieved {len(dividends)} dividend records for {year_month}.")
+        print(f"\n💰 Dividend Report for {year_month}")
+        print("=" * 50)
+        print(f"{'Symbol':<10} | {'Dividend':<10}")
+        print("-" * 50)
 
     for d in dividends:
         # Use .get() to prevent KeyError if keys are slightly different
@@ -203,20 +180,28 @@ def calculate_monthly_dividends(year_month):
         amount = d.get('total_dividend', 0.0)
         
         total_dividends += float(amount)
-        print(f"{symbol:<10} | {amount:<10.2f}")
-
-    print("-" * 50)
-    print(f"{'TOTAL':<10} | {total_dividends:<10.2f}")
-    print("=" * 50 + "\n")
+        if print_table:
+            print(f"{symbol:<10} | {amount:<10.2f}")
+    if print_table:
+        print("-" * 50)
+        print(f"{'TOTAL':<10} | {total_dividends:<10.2f}")
+        print("=" * 50 + "\n")
 
     return total_dividends
 
 
 def value_fresh(current_month):
 
-    portfolio = get_portfolio_performance_json(print_html=True)
-    monthly_performance = calculate_monthly_performance(current_month,print_table=True)
+    portfolio = get_portfolio_performance_json(print_html=False)
+    print(f"\n--- Portfolio Performance for {current_month} ---")
+    print(portfolio)
+    monthly_performance = calculate_monthly_performance(current_month, print_table=False)
+    if not monthly_performance:
+        raise Exception("Monthly performance is empty (missing snapshots?)")
+    print(f"\n--- Monthly Performance for {current_month} ---")
+    print(json.dumps(monthly_performance, indent=4))
     dividends = calculate_monthly_dividends(current_month)  
+    print(f"\n--- Total Dividends for {current_month}: {dividends:.2f} ---")
     
 
     # When you call the function, it returns a JSON string
@@ -263,20 +248,35 @@ def value_fresh(current_month):
     print(json.dumps(monthly_pnl, indent=4))
     print("\n✅ Monthly P&L summary retrieved successfully.")
     
-
 def lambda_handler(event=None, context=None):
     """AWS Lambda Entry Point"""
-    
-    # Everything inside this 'with' block acts on the S3 database
+
+    event = event or {}
+    action = event.get("action", "value_fresh")  # default action
+
     with s3_db_wrapper():
         current_month = datetime.now().strftime('%Y-%m')
-        
+
         try:
-            portfolio = get_portfolio_performance_json(print_html=False)
+            if action == "portfolio":
+                body = json.loads(get_portfolio_performance_json(print_html=False))
+                return {"statusCode": 200, "body": json.dumps(body)}
+
+            elif action == "monthly":
+                perf = calculate_monthly_performance(current_month, print_table=False)
+                return {"statusCode": 200, "body": json.dumps(perf)}
+
+            elif action == "value_fresh":
+                # your existing function prints + inserts pnl
+                value_fresh(current_month=current_month)
+                return {"statusCode": 200, "body": json.dumps({"message": "value_fresh completed", "year_month": current_month})}
+
+            else:
+                return {"statusCode": 400, "body": json.dumps({"error": f"Unknown action '{action}'"})}
 
         except Exception as e:
-            print(f"Error fetching portfolio performance: {e}")
-            portfolio = {}
+            print(f"lambda_handler error: {e}")
+            return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
 
 
 

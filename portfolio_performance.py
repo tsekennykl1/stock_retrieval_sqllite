@@ -1,12 +1,8 @@
-import sqlite3
 import requests
 import json
-import boto3
-from botocore.exceptions import ClientError
 from crud_db import get_latest_portfolio
 
 API_URL = "https://z35lnmmzgi.execute-api.ap-east-1.amazonaws.com/prod/stocks?stocks="
-DB_NAME = "mystocks.db"
 
 
 def fetch_current_prices(symbols):
@@ -18,7 +14,12 @@ def fetch_current_prices(symbols):
     url = f"{API_URL}{symbol_string}"
     
     print(f"Fetching prices from API: {url}...")
-    response = requests.get(url)
+    try:
+        response = requests.get(url, timeout=(3, 10))
+        response.raise_for_status()
+    except requests.RequestException as e:
+        print(f"Error fetching prices: {e}")
+        return {}
     
     if response.status_code == 200:
         data = response.json()
@@ -39,7 +40,22 @@ def fetch_current_prices(symbols):
         print(f"Failed to fetch prices. Status Code: {response.status_code}")
         return {}
 
+def snapshot_beginning_of_month(year_month):
+    holdings = get_portfolio()
+    if not holdings:
+        print("Portfolio is empty, nothing to snapshot.")
+        return {"message": "empty"}
 
+    symbols = [h["stock_symbol"] for h in holdings]
+    prices = fetch_current_prices(symbols)
+
+    for h in holdings:
+        symbol = h["stock_symbol"]
+        qty = float(h["quantity"])
+        price = float(prices.get(symbol, 0.0))
+        insert_monthly_snapshot(stock_symbol=symbol, start_quantity=qty, start_price=price, year_month=year_month)
+
+    return {"message": "snapshot_saved", "year_month": year_month}
 
 def get_portfolio_performance_json(print_html=False):
     holdings = get_latest_portfolio()

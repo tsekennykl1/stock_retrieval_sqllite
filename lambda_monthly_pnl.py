@@ -14,7 +14,8 @@ def retrieve_monthly_pnl(start_date):
         
         print(f"Retrieving monthly P&L data starting from {start_date_obj.strftime('%Y-%m')}...")
         # Retrieve all monthly P&L entries from the database
-        monthly_pnl_data = get_monthly_pnl(pnl_date=start_date_obj.strftime('%d/%m/%Y %H:%M'))
+        monthly_pnl_data = get_monthly_pnl(pnl_date=start_date_obj.strftime('%Y-%m-01 00:00:00')
+)
         print(f"Retrieved {len(monthly_pnl_data)} entries from the database.")
         filtered_pnl_data = [
             entry for entry in monthly_pnl_data

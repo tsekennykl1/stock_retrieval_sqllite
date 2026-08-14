@@ -2,12 +2,18 @@ name: Deploy SQLite DB to EFS via S3
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-lambdas-main
+  cancel-in-progress: true
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout code
@@ -16,7 +22,13 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install build tooling (zip)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip
 
       - name: Generate SQLite Database
         run: python create_db.py
@@ -28,8 +40,11 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      # ── Upload mystocks.db and files to S3 (staging area) ──────────────────
-      # [COMMENTED OUT] Only run this the very first time to avoid overwriting production EFS db
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
+
+      # ── OPTIONAL: Upload mystocks.db to S3 (staging) ───────────────────────
+      # Enable only when you really want to overwrite the DB in S3/EFS.
       # - name: Upload SQLite DB to S3
       #   env:
       #     S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
@@ -37,182 +52,263 @@ jobs:
       #     aws s3 cp mystocks.db "s3://${S3_BUCKET_NAME}/mystocks.db"
       #     echo "✅ Database uploaded to S3 staging area"
 
-      - name: Sync GitHub files to S3
+      - name: Sync GitHub files to S3 (optional staging)
         env:
           S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
         run: |
-          aws s3 sync . "s3://${S3_BUCKET_NAME}/github" --exclude ".git/*" --exclude ".github/*" --exclude "*.yml" --exclude "*.md"
+          aws s3 sync . "s3://${S3_BUCKET_NAME}/github" \
+            --exclude ".git/*" \
+            --exclude ".github/*" \
+            --exclude "*.yml" \
+            --exclude "*.md" \
+            --exclude ".venv/*" \
+            --exclude "__pycache__/*"
           echo "✅ Files synced to S3"
 
-      # ── Helper: create or update a Lambda function ─────────────────────────
+      # ── Deploy Lambdas ─────────────────────────────────────────────────────
       - name: Deploy Lambda functions
         env:
-          S3_BUCKET_NAME:        ${{ secrets.S3_BUCKET_NAME }}
-          LAMBDA_ROLE_ARN:       ${{ secrets.LAMBDA_ROLE_ARN }}
-          VPC_SUBNET_IDS:        ${{ secrets.VPC_SUBNET_IDS }}
-          VPC_SECURITY_GROUP_ID: ${{ secrets.VPC_SECURITY_GROUP_ID }}
-          EFS_ACCESS_POINT_ARN:  ${{ secrets.EFS_ACCESS_POINT_ARN }}
+          S3_BUCKET_NAME:         ${{ secrets.S3_BUCKET_NAME }}
+          LAMBDA_ROLE_ARN:        ${{ secrets.LAMBDA_ROLE_ARN }}
+          VPC_SUBNET_IDS:         ${{ secrets.VPC_SUBNET_IDS }}        # comma-separated
+          VPC_SECURITY_GROUP_ID:  ${{ secrets.VPC_SECURITY_GROUP_ID }}
+          EFS_ACCESS_POINT_ARN:   ${{ secrets.EFS_ACCESS_POINT_ARN }}
+        shell: bash
         run: |
+          set -euo pipefail
+
           mkdir -p build
 
-          # Usage: deploy_lambda <function_name> <env_count> <env1> ... <file1> ...
-          deploy_lambda() {
-            FUNCTION_NAME="$1"
-            ENV_COUNT="$2"
-            shift 2
+          json_escape () {
+            python3 - <<'PY'
+          import json,sys
+          print(json.dumps(sys.stdin.read().rstrip("\n"))[1:-1])
+          PY
+          }
 
-            # Split args into ENV_PAIRS and FILES based on ENV_COUNT
-            ENV_PAIRS=()
-            FILES=()
-            INDEX=0
-            for arg in "$@"; do
-              if [ "$INDEX" -lt "$ENV_COUNT" ]; then
-                ENV_PAIRS+=("$arg")
+          to_json_array_from_csv () {
+            python3 - <<'PY'
+          import os,json
+          csv = os.environ["CSV"]
+          items = [x.strip() for x in csv.split(",") if x.strip()]
+          print(json.dumps(items))
+          PY
+          }
+
+          build_zip () {
+            local function_name="$1"
+            shift
+            rm -rf build/*
+            rm -f "${function_name}.zip"
+
+            # Copy source files/folders into build/
+            for path in "$@"; do
+              if [ -d "$path" ]; then
+                cp -R "$path" build/
               else
-                FILES+=("$arg")
+                cp "$path" build/
               fi
-              INDEX=$((INDEX + 1))
             done
 
-            echo "──────────────────────────────────────────"
-            echo "Deploying: $FUNCTION_NAME"
-            echo "  Files    : ${FILES[*]}"
-            echo "──────────────────────────────────────────"
-
-            # 1. Build zip
-            rm -rf build/* "${FUNCTION_NAME}.zip"
-            for f in "${FILES[@]}"; do
-              cp "$f" build/
-            done
-
-            # Install function-specific deps if present (fallback to repo requirements.txt)
-            if [ -f "requirements_${FUNCTION_NAME}.txt" ]; then
-              pip install -r "requirements_${FUNCTION_NAME}.txt" -t build/
+            # Install dependencies
+            if [ -f "requirements_${function_name}.txt" ]; then
+              pip install -r "requirements_${function_name}.txt" -t build/
             elif [ -f "requirements.txt" ]; then
               pip install -r requirements.txt -t build/
             fi
 
-            cd build && zip -r "../${FUNCTION_NAME}.zip" . && cd ..
-            echo "✅ Zip created: ${FUNCTION_NAME}.zip"
+            (cd build && zip -r "../${function_name}.zip" .)
+            echo "✅ Zip created: ${function_name}.zip"
+          }
 
-            # 2. Write env vars to JSON file
-            ENV_JSON="{\"Variables\":{"
-            FIRST=true
-            for pair in "${ENV_PAIRS[@]}"; do
-              KEY="${pair%%=*}"
-              VAL="${pair#*=}"
-              if [ "$FIRST" = true ]; then
-                FIRST=false
-              else
-                ENV_JSON+=","
-              fi
-              ENV_JSON+="\"${KEY}\":\"${VAL}\""
+          write_env_json () {
+            local function_name="$1"
+            shift
+
+            # args: KEY=VALUE ...
+            python3 - <<PY >"/tmp/${function_name}_env.json"
+          import json,sys
+          vars={}
+          for pair in sys.argv[1:]:
+            k,v = pair.split("=",1)
+            vars[k]=v
+          print(json.dumps({"Variables":vars}))
+          PY
+            echo "🔧 Env JSON written: /tmp/${function_name}_env.json"
+          }
+
+          write_vpc_json () {
+            local function_name="$1"
+
+            if [ -z "${VPC_SUBNET_IDS:-}" ] || [ -z "${VPC_SECURITY_GROUP_ID:-}" ]; then
+              echo "❌ VPC_SUBNET_IDS / VPC_SECURITY_GROUP_ID not set"
+              exit 1
+            fi
+
+            CSV="$VPC_SUBNET_IDS" SUBNET_JSON="$(to_json_array_from_csv)"
+            python3 - <<PY >"/tmp/${function_name}_vpc.json"
+          import json,sys,os
+          subnet_ids = json.loads(os.environ["SUBNET_JSON"])
+          sg_id = os.environ["SG_ID"]
+          print(json.dumps({"SubnetIds": subnet_ids, "SecurityGroupIds":[sg_id]}))
+          PY
+          }
+
+          write_efs_json () {
+            local function_name="$1"
+
+            if [ -z "${EFS_ACCESS_POINT_ARN:-}" ]; then
+              echo "❌ EFS_ACCESS_POINT_ARN not set"
+              exit 1
+            fi
+
+            python3 - <<PY >"/tmp/${function_name}_efs.json"
+          import json,os
+          arn = os.environ["EFS_ACCESS_POINT_ARN"]
+          print(json.dumps([{"Arn": arn, "LocalMountPath": "/mnt/efs"}]))
+          PY
+          }
+
+          deploy_lambda () {
+            local function_name="$1"
+            local handler="${function_name}.lambda_handler"
+            local runtime="python3.11"
+            local timeout="${2:-60}"
+            local memory="${3:-256}"
+            shift 3
+
+            # Split args with marker: --env ... --files ...
+            local mode=""
+            local -a env_pairs=()
+            local -a files=()
+
+            for arg in "$@"; do
+              if [ "$arg" = "--env" ]; then mode="env"; continue; fi
+              if [ "$arg" = "--files" ]; then mode="files"; continue; fi
+              if [ "$mode" = "env" ]; then env_pairs+=("$arg"); continue; fi
+              if [ "$mode" = "files" ]; then files+=("$arg"); continue; fi
             done
-            ENV_JSON+="}}"
-            echo "$ENV_JSON" > /tmp/${FUNCTION_NAME}_env.json
-            echo "🔧 Env JSON: $(cat /tmp/${FUNCTION_NAME}_env.json)"
 
-            # 3. Write VPC config to JSON file
-            SUBNET_JSON=$(echo "$VPC_SUBNET_IDS" | tr ',' '\n' | \
-              awk 'BEGIN{printf "["} NR>1{printf ","} {printf "\"%s\"", $1} END{printf "]"}')
-            VPC_JSON="{\"SubnetIds\":${SUBNET_JSON},\"SecurityGroupIds\":[\"${VPC_SECURITY_GROUP_ID}\"]}"
-            echo "$VPC_JSON" > /tmp/${FUNCTION_NAME}_vpc.json
-            echo "🔧 VPC JSON: $(cat /tmp/${FUNCTION_NAME}_vpc.json)"
+            if [ "${#files[@]}" -eq 0 ]; then
+              echo "❌ No files provided for ${function_name}"
+              exit 1
+            fi
 
-            # 4. Write EFS config to JSON file
-            EFS_JSON="[{\"Arn\":\"${EFS_ACCESS_POINT_ARN}\",\"LocalMountPath\":\"/mnt/efs\"}]"
-            echo "$EFS_JSON" > /tmp/${FUNCTION_NAME}_efs.json
-            echo "🔧 EFS JSON: $(cat /tmp/${FUNCTION_NAME}_efs.json)"
+            echo "──────────────────────────────────────────"
+            echo "Deploying: ${function_name}"
+            echo "  Handler : ${handler}"
+            echo "  Files   : ${files[*]}"
+            echo "──────────────────────────────────────────"
 
-            # 5. Check if Lambda already exists
-            if aws lambda get-function --function-name "$FUNCTION_NAME" > /dev/null 2>&1; then
+            build_zip "${function_name}" "${files[@]}"
+            write_env_json "${function_name}" "${env_pairs[@]}"
+            write_vpc_json "${function_name}"
+            write_efs_json "${function_name}"
+
+            if aws lambda get-function --function-name "${function_name}" >/dev/null 2>&1; then
               echo "🔄 Function exists — updating code..."
               aws lambda update-function-code \
-                --function-name "$FUNCTION_NAME" \
-                --zip-file "fileb://${FUNCTION_NAME}.zip"
+                --function-name "${function_name}" \
+                --zip-file "fileb://${function_name}.zip" >/dev/null
 
-              aws lambda wait function-updated \
-                --function-name "$FUNCTION_NAME"
+              aws lambda wait function-updated --function-name "${function_name}"
+
+              echo "🔧 Updating configuration..."
+              aws lambda update-function-configuration \
+                --function-name "${function_name}" \
+                --runtime "${runtime}" \
+                --handler "${handler}" \
+                --role "${LAMBDA_ROLE_ARN}" \
+                --timeout "${timeout}" \
+                --memory-size "${memory}" \
+                --environment "file:///tmp/${function_name}_env.json" \
+                --vpc-config "file:///tmp/${function_name}_vpc.json" \
+                --file-system-configs "file:///tmp/${function_name}_efs.json" >/dev/null
+
+              aws lambda wait function-updated --function-name "${function_name}"
 
             else
               echo "🆕 Function not found — creating..."
               aws lambda create-function \
-                --function-name "$FUNCTION_NAME" \
-                --runtime python3.11 \
-                --role "$LAMBDA_ROLE_ARN" \
-                --handler "${FUNCTION_NAME}.lambda_handler" \
-                --zip-file "fileb://${FUNCTION_NAME}.zip" \
-                --timeout 60 \
-                --memory-size 256 \
-                --environment "file:///tmp/${FUNCTION_NAME}_env.json" \
-                --vpc-config "file:///tmp/${FUNCTION_NAME}_vpc.json" \
-                --file-system-configs "file:///tmp/${FUNCTION_NAME}_efs.json"
+                --function-name "${function_name}" \
+                --runtime "${runtime}" \
+                --role "${LAMBDA_ROLE_ARN}" \
+                --handler "${handler}" \
+                --zip-file "fileb://${function_name}.zip" \
+                --timeout "${timeout}" \
+                --memory-size "${memory}" \
+                --environment "file:///tmp/${function_name}_env.json" \
+                --vpc-config "file:///tmp/${function_name}_vpc.json" \
+                --file-system-configs "file:///tmp/${function_name}_efs.json" >/dev/null
 
-              aws lambda wait function-active \
-                --function-name "$FUNCTION_NAME"
-
-              echo "✅ Function created: $FUNCTION_NAME"
+              aws lambda wait function-active --function-name "${function_name}"
             fi
 
-            # 6. Always sync env vars and config (idempotent)
-            echo "🔧 Syncing environment variables and config..."
-            aws lambda update-function-configuration \
-              --function-name "$FUNCTION_NAME" \
-              --environment "file:///tmp/${FUNCTION_NAME}_env.json" \
-              --vpc-config "file:///tmp/${FUNCTION_NAME}_vpc.json" \
-              --file-system-configs "file:///tmp/${FUNCTION_NAME}_efs.json"
-
-            aws lambda wait function-updated \
-              --function-name "$FUNCTION_NAME"
-
-            echo "✅ Done: $FUNCTION_NAME"
+            echo "✅ Done: ${function_name}"
           }
 
-          # ── Deploy lambda_monthly_pnl (2 env vars, 2 files) ───────────────
-          deploy_lambda "lambda_monthly_pnl" 2 \
-            "DB_PATH=/mnt/efs/mystocks.db" \
-            "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
-            "lambda_monthly_pnl.py" "crud_db.py"
+          # NOTE:
+          # Your original workflow had mismatched "env_count" vs file list.
+          # This updated version uses explicit markers: --env ... --files ...
 
-          # ── Deploy lambda_s3_to_efs (2 env vars, 1 file) ──────────────────
-          deploy_lambda "lambda_s3_to_efs" 2 \
-            "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
-            "EFS_PATH=/mnt/efs" \
-            "lambda_s3_to_efs.py"
+          # ── lambda_monthly_pnl ─────────────────────────────────────────────
+          deploy_lambda "lambda_monthly_pnl" 60 256 \
+            --env \
+              "DB_PATH=/mnt/efs/mystocks.db" \
+              "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
+            --files \
+              "lambda_monthly_pnl.py" \
+              "crud_db.py"
 
-          # ── Deploy lambda_portfolio_performance (2 env vars, 2 files) ─────
-          deploy_lambda "lambda_portfolio_performance" 2 \
-            "DB_PATH=/mnt/efs/mystocks.db" \
-            "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
-            "lambda_portfolio_performance.py" "crud_db.py" "portfolio_performance.py"
+          # ── lambda_s3_to_efs ───────────────────────────────────────────────
+          deploy_lambda "lambda_s3_to_efs" 60 256 \
+            --env \
+              "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
+              "EFS_PATH=/mnt/efs" \
+            --files \
+              "lambda_s3_to_efs.py"
 
-      # ── Trigger S3-to-EFS copy Lambda ──────────────────────────────────────
-      # ── Trigger S3-to-EFS copy Lambda ──────────────────────────────────────
-      # [COMMENTED OUT] Only run this the very first time to avoid overwriting production EFS db
+          # ── lambda_portfolio_performance ──────────────────────────────────
+          deploy_lambda "lambda_portfolio_performance" 60 256 \
+            --env \
+              "DB_PATH=/mnt/efs/mystocks.db" \
+              "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
+            --files \
+              "lambda_portfolio_performance.py" \
+              "crud_db.py" \
+              "portfolio_performance.py"
+
+          # ── (Optional) consolidated monthly report lambda (if you have it) ─
+          # Uncomment and adjust files if your repo contains these paths:
+          deploy_lambda "lambda_consolidated_monthly_report" 60 256 \
+             --env \
+               "DB_PATH=/mnt/efs/mystocks.db" \
+               "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
+               "STOCK_RETRIEVAL_FUNCTION_NAME=stock_retrieval_lambda" \
+               "AWS_REGION=${{ secrets.AWS_REGION }}" \
+             --files \
+               "lambda_consolidated_monthly_report.py" \
+               "crud_db.py" \
+               "monthly_ledger.py" \
+               "monthly_performance.py" \
+               "services" \
+               "s3_db_sync.py"
+
+      # ── OPTIONAL: Trigger S3-to-EFS copy Lambda ───────────────────────────
+      # Enable only when you really want to overwrite the DB on EFS.
       # - name: Trigger S3-to-EFS copy Lambda
       #   run: |
       #     echo "🚀 Invoking lambda_s3_to_efs to copy mystocks.db to EFS..."
-      #
       #     aws lambda invoke \
       #       --function-name lambda_s3_to_efs \
       #       --payload '{}' \
       #       --cli-binary-format raw-in-base64-out \
       #       response.json
-      #
       #     echo "Lambda response:"
       #     cat response.json
-      #
-      #     # Fail pipeline if Lambda returned non-200
-      #     STATUS=$(python3 -c "
-      #     import json
-      #     with open('response.json') as f:
-      #         d = json.load(f)
-      #     print(d.get('statusCode', 500))
-      #     ")
-      #
+      #     STATUS=$(python3 -c "import json;print(json.load(open('response.json')).get('statusCode',500))")
       #     if [ "$STATUS" != "200" ]; then
       #       echo "❌ S3-to-EFS copy failed with status: $STATUS"
       #       exit 1
       #     fi
-      #
       #     echo "✅ mystocks.db successfully copied to EFS!"
