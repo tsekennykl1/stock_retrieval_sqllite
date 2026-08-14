@@ -279,7 +279,8 @@ jobs:
               "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
             --files \
               "lambda_monthly_pnl.py" \
-              "crud_db.py"
+              "crud_db.py" \
+              "services" 
 
           # ── lambda_s3_to_efs ───────────────────────────────────────────────
           deploy_lambda "lambda_s3_to_efs" 60 256 \
@@ -297,7 +298,8 @@ jobs:
             --files \
               "lambda_portfolio_performance.py" \
               "crud_db.py" \
-              "portfolio_performance.py"
+              "portfolio_performance.py" \
+              "services" 
 
           # ── consolidated monthly report ───────────────────────────────────
           deploy_lambda "lambda_consolidated_monthly_report" 60 256 \
