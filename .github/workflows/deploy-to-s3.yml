@@ -12,6 +12,8 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     permissions:
       contents: read
 
@@ -71,6 +73,7 @@ jobs:
       # ── Deploy Lambdas ─────────────────────────────────────────────────────
       - name: Deploy Lambda functions
         env:
+          AWS_REGION:             ${{ secrets.AWS_REGION }}
           S3_BUCKET_NAME:         ${{ secrets.S3_BUCKET_NAME }}
           LAMBDA_ROLE_ARN:        ${{ secrets.LAMBDA_ROLE_ARN }}
           VPC_SUBNET_IDS:         ${{ secrets.VPC_SUBNET_IDS }}        # comma-separated
@@ -269,10 +272,6 @@ jobs:
             echo "✅ Done: ${function_name}"
           }
 
-          # NOTE:
-          # Your original workflow had mismatched "env_count" vs file list.
-          # This updated version uses explicit markers: --env ... --files ...
-
           # ── lambda_monthly_pnl ─────────────────────────────────────────────
           deploy_lambda "lambda_monthly_pnl" 60 256 \
             --env \
@@ -300,14 +299,13 @@ jobs:
               "crud_db.py" \
               "portfolio_performance.py"
 
-          # ── (Optional) consolidated monthly report lambda (if you have it) ─
-          # Uncomment and adjust files if your repo contains these paths:
+          # ── consolidated monthly report ───────────────────────────────────
           deploy_lambda "lambda_consolidated_monthly_report" 60 256 \
              --env \
                "DB_PATH=/mnt/efs/mystocks.db" \
                "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
                "STOCK_RETRIEVAL_FUNCTION_NAME=stock_retrieval_lambda" \
-               "AWS_REGION=${{ secrets.AWS_REGION }}" \
+               "AWS_REGION=${AWS_REGION}" \
              --files \
                "lambda_consolidated_monthly_report.py" \
                "crud_db.py" \
@@ -315,22 +313,3 @@ jobs:
                "monthly_performance.py" \
                "services" \
                "s3_db_sync.py"
-
-      # ── OPTIONAL: Trigger S3-to-EFS copy Lambda ───────────────────────────
-      # Enable only when you really want to overwrite the DB on EFS.
-      # - name: Trigger S3-to-EFS copy Lambda
-      #   run: |
-      #     echo "🚀 Invoking lambda_s3_to_efs to copy mystocks.db to EFS..."
-      #     aws lambda invoke \
-      #       --function-name lambda_s3_to_efs \
-      #       --payload '{}' \
-      #       --cli-binary-format raw-in-base64-out \
-      #       response.json
-      #     echo "Lambda response:"
-      #     cat response.json
-      #     STATUS=$(python3 -c "import json;print(json.load(open('response.json')).get('statusCode',500))")
-      #     if [ "$STATUS" != "200" ]; then
-      #       echo "❌ S3-to-EFS copy failed with status: $STATUS"
-      #       exit 1
-      #     fi
-      #     echo "✅ mystocks.db successfully copied to EFS!"
