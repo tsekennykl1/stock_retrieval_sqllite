@@ -311,5 +311,6 @@ jobs:
                "crud_db.py" \
                "monthly_ledger.py" \
                "monthly_performance.py" \
+               "portfolio_performance.py" \
                "services" \
                "s3_db_sync.py"
