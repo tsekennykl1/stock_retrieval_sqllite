@@ -33,7 +33,8 @@ def build_monthly_report(year_month: str | None = None) -> dict:
 
     income = float(ledger.get("Total_Income", 0.0))
     expenses = float(ledger.get("Total_Expense", 0.0))
-    stock_pnl = float(monthly_perf["totals"]["total_net_diff"])
+    stock_pnl = float(monthly_perf["totals"]["total_realized_gl"])
+     
 
     # Insert/update current month PnL
     insert_monthly_pnl(
@@ -46,8 +47,10 @@ def build_monthly_report(year_month: str | None = None) -> dict:
     )
 
     # Read back computed columns
-    current_rows = get_monthly_pnl(year_month=year_month)
-    current_pnl = current_rows[0] if current_rows else {}
+    all_pnl = get_monthly_pnl()
+    current_pnl = all_pnl[0] if all_pnl else {}
+
+
 
     # Round floats for clean output
     for k, v in list(current_pnl.items()):
@@ -61,5 +64,6 @@ def build_monthly_report(year_month: str | None = None) -> dict:
         "monthly_performance": monthly_perf,
         "monthly_ledger": ledger,
         "dividends_total": round(dividends_total, 2),
-        "monthly_pnl": current_pnl,
+        "current_monthly_pnl": current_pnl,
+        "all_monthly_pnl": all_pnl
     }
