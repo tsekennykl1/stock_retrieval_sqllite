@@ -292,7 +292,7 @@ jobs:
           # ── lambda_s3_to_efs ───────────────────────────────────────────────
           deploy_lambda "lambda_s3_to_efs" 60 256 \
             --env \
-              "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
+              "S3_BUCKET_NAME=s3general-148535751717-ap-east-1-an" \
               "EFS_PATH=/mnt/efs" \
             --files \
               "lambda_s3_to_efs.py"
