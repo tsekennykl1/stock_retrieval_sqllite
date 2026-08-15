@@ -2,7 +2,7 @@ import requests
 import json
 from crud_db import get_latest_portfolio
 
-API_URL = "https://z35lnmmzgi.execute-api.ap-east-1.amazonaws.com/prod/stocks?stocks="
+API_URL = "https://z35lnmmzgi.execute-api.ap-east-1.amazonaws.com/prod/stock?stocks="
 
 def fetch_current_prices(symbols):
     """Fetch current stock prices from the API."""
