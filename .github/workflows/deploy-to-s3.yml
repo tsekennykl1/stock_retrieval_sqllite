@@ -12,8 +12,10 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    # Node 20 deprecation fix:
+    # Do NOT force Node24 via FORCE_JAVASCRIPT_ACTIONS_TO_NODE24.
+    # Instead, pin to current major versions of actions that run on the runner-supported Node version (Node24 by default as of 2026-06-16).
     permissions:
       contents: read
 
@@ -21,10 +23,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python (build env matches Lambda runtime)
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.13"
           cache: pip
           cache-dependency-path: |
             requirements.txt
@@ -79,6 +81,10 @@ jobs:
           VPC_SUBNET_IDS:         ${{ secrets.VPC_SUBNET_IDS }}        # comma-separated
           VPC_SECURITY_GROUP_ID:  ${{ secrets.VPC_SECURITY_GROUP_ID }}
           EFS_ACCESS_POINT_ARN:   ${{ secrets.EFS_ACCESS_POINT_ARN }}
+
+          # Python 3.13 runtime setting:
+          # Your deploy script must read this env var (recommended) OR you must hardcode python3.13 in the script.
+          LAMBDA_PY_RUNTIME:      python3.13
         shell: bash
         run: |
           set -euo pipefail
@@ -170,6 +176,7 @@ jobs:
 
           if not re.match(r"^sg-[0-9a-fA-F]+$", sg_id):
               print(f"Invalid security group ID: {sg_id}", file=sys.stderr)
+                  # note: keep existing behavior
               sys.exit(1)
 
           print(json.dumps({
@@ -177,8 +184,8 @@ jobs:
               "SecurityGroupIds": [sg_id]
           }))
           PY
-          }         
-          
+          }
+
           write_efs_json () {
             local function_name="$1"
 
@@ -197,7 +204,10 @@ jobs:
           deploy_lambda () {
             local function_name="$1"
             local handler="${function_name}.lambda_handler"
-            local runtime="python3.11"
+
+            # Use the runtime from env (set above). Defaults to python3.11 if not provided.
+            local runtime="${LAMBDA_PY_RUNTIME:-python3.11}"
+
             local timeout="${2:-60}"
             local memory="${3:-256}"
             shift 3
@@ -222,6 +232,7 @@ jobs:
             echo "──────────────────────────────────────────"
             echo "Deploying: ${function_name}"
             echo "  Handler : ${handler}"
+            echo "  Runtime : ${runtime}"
             echo "  Files   : ${files[*]}"
             echo "──────────────────────────────────────────"
 
@@ -280,7 +291,7 @@ jobs:
             --files \
               "lambda_monthly_pnl.py" \
               "crud_db.py" \
-              "services" 
+              "services"
 
           # ── lambda_s3_to_efs ───────────────────────────────────────────────
           deploy_lambda "lambda_s3_to_efs" 60 256 \
@@ -299,20 +310,20 @@ jobs:
               "lambda_portfolio_performance.py" \
               "crud_db.py" \
               "portfolio_performance.py" \
-              "services" 
+              "services"
 
           # ── consolidated monthly report ───────────────────────────────────
           deploy_lambda "lambda_consolidated_monthly_report" 60 256 \
-             --env \
-               "DB_PATH=/mnt/efs/mystocks.db" \
-               "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
-               "STOCK_RETRIEVAL_FUNCTION_NAME=stock_retrieval_lambda" \
-               "AWS_REGION=${AWS_REGION}" \
-             --files \
-               "lambda_consolidated_monthly_report.py" \
-               "crud_db.py" \
-               "monthly_ledger.py" \
-               "monthly_performance.py" \
-               "portfolio_performance.py" \
-               "services" \
-               "s3_db_sync.py"
+            --env \
+              "DB_PATH=/mnt/efs/mystocks.db" \
+              "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
+              "STOCK_RETRIEVAL_FUNCTION_NAME=stock_retrieval_lambda" \
+              "AWS_REGION=${AWS_REGION}" \
+            --files \
+              "lambda_consolidated_monthly_report.py" \
+              "crud_db.py" \
+              "monthly_ledger.py" \
+              "monthly_performance.py" \
+              "portfolio_performance.py" \
+              "services" \
+              "s3_db_sync.py"
