@@ -1,7 +1,7 @@
-# lambda_consolidated_monthly_report.py
 import json
 import os
 import boto3
+import calendar
 from datetime import datetime, timezone
 
 from s3_db_sync import s3_db_wrapper
@@ -16,7 +16,18 @@ def get_current_month_pnl():
     fn = os.environ.get("MONTHLY_PNL_FUNCTION_NAME", "lambda_monthly_pnl")
 
     now = datetime.now(timezone.utc)
-    payload = {"year": now.year, "month": now.month}
+
+    # ✅ Change this to %Y-%m so it doesn't pass the -01 day to the older AWS Lambda 
+    start_date = now.strftime('%Y-%m')
+    
+    # Calculate the last day of the current month securely
+    last_day = calendar.monthrange(now.year, now.month)[1]
+    end_date = now.replace(day=last_day).strftime('%Y-%m-%d')
+        
+    payload = {
+        "start_date": start_date,
+        "end_date": end_date
+    }
 
     resp = lambda_client.invoke(
         FunctionName=fn,

@@ -14,22 +14,30 @@ from crud_db import (
 from portfolio_performance import get_portfolio_performance_json
 from monthly_ledger import get_monthly_ledger
 
+#### filepath: /Users/kwokleungtse/Documents/AWS/stock_retrieval_sqllite/monthly_performance.py
+# ...existing code...
 API_URL = "https://z35lnmmzgi.execute-api.ap-east-1.amazonaws.com/prod/stocks?stocks="
 
 def fetch_current_prices(symbols):
     """Fetch current stock prices from the API."""
     if not symbols: return {}
-    response = requests.get(f"{API_URL}{','.join(symbols)}", timeout=(3, 10))
-    prices = {}
-    if response.status_code == 200:
-        data = response.json()
-        for key, val in data.items():
-            if isinstance(val, dict) and 'price' in val: prices[key] = float(val['price'])
-            elif isinstance(val, dict) and 'regularMarketPrice' in val: prices[key] = float(val['regularMarketPrice'])
-            else:
-                try: prices[key] = float(val)
-                except (TypeError, ValueError): prices[key] = 0.0
-    return prices
+    
+    try:
+        response = requests.get(f"{API_URL}{','.join(symbols)}", timeout=(3, 10))
+        prices = {}
+        if response.status_code == 200:
+            data = response.json()
+            for key, val in data.items():
+                if isinstance(val, dict):
+                    # Fetch directly from the "price" attribute in the new JSON format
+                    prices[key] = float(val.get('price', 0.0))
+                else:
+                    try: prices[key] = float(val)
+                    except (TypeError, ValueError): prices[key] = 0.0
+        return prices
+    except requests.RequestException as e:
+        print(f"Error fetching prices: {e}")
+        return {}
 
 
 def calculate_monthly_performance(year_month, print_table=False):

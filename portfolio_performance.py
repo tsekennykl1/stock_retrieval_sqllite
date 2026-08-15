@@ -4,7 +4,6 @@ from crud_db import get_latest_portfolio
 
 API_URL = "https://z35lnmmzgi.execute-api.ap-east-1.amazonaws.com/prod/stocks?stocks="
 
-
 def fetch_current_prices(symbols):
     """Fetch current stock prices from the API."""
     if not symbols:
@@ -26,8 +25,9 @@ def fetch_current_prices(symbols):
         prices = {}
         for key, val in data.items():
             if isinstance(val, dict):
-                price = float(val.get('price', val.get('regularMarketPrice', 0.0)))
-                short_name = val.get('shortName_en', '')
+                # Cleanly grab price from new format
+                price = float(val.get('price', 0.0))
+                short_name = val.get('shortName_en', '') # Safe if API stops sending it
                 prices[key] = {'price': price, 'shortName_en': short_name}
             else:
                 try:
@@ -39,7 +39,7 @@ def fetch_current_prices(symbols):
     else:
         print(f"Failed to fetch prices. Status Code: {response.status_code}")
         return {}
-
+    
 def snapshot_beginning_of_month(year_month):
     holdings = get_portfolio()
     if not holdings:
