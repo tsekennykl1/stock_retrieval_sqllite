@@ -1,6 +1,7 @@
 import sqlite3
 import csv
 import os
+from pathlib import Path
 
 DB_NAME = "mystocks.db"
 
@@ -28,7 +29,8 @@ def export_to_csv(target_table=None):
     tables_to_export = [target_table] if target_table else TABLES
 
     for table in tables_to_export:
-        csv_filename = f"{table}.csv"
+
+        csv_filename = os.path.join("csv", f"{table}.csv")
         try:
             cursor.execute(f"SELECT * FROM {table}")
             rows = cursor.fetchall()
@@ -73,7 +75,7 @@ def import_from_csv(target_table=None):
     }
 
     for table in tables_to_import:
-        csv_filename = f"{table}.csv"
+        csv_filename = os.path.join("csv", f"{table}.csv")
         
         if not os.path.exists(csv_filename):
             print(f"⚠️  File '{csv_filename}' not found. Skipping import for '{table}'.")

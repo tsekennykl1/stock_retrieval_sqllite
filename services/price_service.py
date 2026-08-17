@@ -3,18 +3,19 @@ import json
 import os
 import time
 import random
+import requests
 
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-STOCK_RETRIEVAL_FUNCTION_NAME = os.environ.get("STOCK_RETRIEVAL_FUNCTION_NAME", "stock_retrieval_lambda")
+STOCK_RETRIEVAL_FUNCTION_NAME = os.environ.get("STOCK_RETRIEVAL_FUNCTION_NAME", "stock-price-retrieval")
 AWS_REGION = os.environ.get("AWS_REGION")  # let Lambda default if not set
 
 _lambda_client = boto3.client(
     "lambda",
     region_name=AWS_REGION,
-    config=Config(retries={"max_attempts": 3, "mode": "standard"})
+    config=Config(retries={"max_attempts": 0, "mode": "standard"})
 )
 
 RETRYABLE_CODES = {
@@ -27,7 +28,7 @@ RETRYABLE_CODES = {
 }
 
 
-def fetch_quotes_via_lambda(symbols: list[str], max_retries: int = 5) -> dict:
+def fetch_current_prices_lambda(symbols: list[str], max_retries: int = 1) -> dict:
     """
     Invokes stock_retrieval_lambda and returns a dict keyed by symbol.
     Expected return shape per symbol: dict with fields like price, shortName_en, etc.
@@ -64,3 +65,38 @@ def fetch_quotes_via_lambda(symbols: list[str], max_retries: int = 5) -> dict:
             sleep_s = min(2 ** attempt, 10) + random.random()
             print(f"fetch_quotes retry {attempt+1}/{max_retries} after {sleep_s:.2f}s due to {code}")
             time.sleep(sleep_s)
+
+
+#### filepath: /Users/kwokleungtse/Documents/AWS/stock_retrieval_sqllite/monthly_performance.py
+# ...existing code...
+API_URL = "https://z35lnmmzgi.execute-api.ap-east-1.amazonaws.com/prod/stock?stocks="
+
+def fetch_current_prices(symbols) -> dict:
+    """Fetch current stock prices from the API."""
+    if not symbols: return {}
+    
+    try:
+        response = requests.get(f"{API_URL}{','.join(symbols)}", timeout=(3, 10))
+        
+        if response.status_code == 200:
+            data = response.json()
+
+        return data
+    except requests.RequestException as e:
+        print(f"Error fetching prices: {e}")
+        return {}
+
+
+if __name__ == "__main__":
+    # Example test for fetch_current_prices and fetch_current_prices_lambda
+    test_symbols = ["0700.HK", "9988.HK", "0005.HK"]
+    try:
+        print("=======================")
+        quotes = fetch_current_prices_lambda(test_symbols, max_retries=1)
+        print("Fetched quotes:", quotes)
+        print("=======================")
+        prices = fetch_current_prices(test_symbols)
+        print("Get prices:", prices)
+        print("=======================")
+    except Exception as e:
+        print("Error fetching quotes:", e)

@@ -2,7 +2,7 @@
 import json
 
 from crud_db import get_latest_portfolio
-from services.price_service import fetch_quotes_via_lambda
+from services.price_service import fetch_current_prices, fetch_current_prices_lambda
 
 
 def get_portfolio_holdings_json(print_html: bool = False) -> str:
@@ -16,7 +16,7 @@ def get_portfolio_holdings_json(print_html: bool = False) -> str:
         return json.dumps({"message": "Portfolio is empty.", "holdings": [], "summary": {}})
 
     symbols = [h["stock_symbol"] for h in holdings]
-    quotes = fetch_quotes_via_lambda(symbols)
+    quotes = fetch_current_prices_lambda(symbols)
 
     prices = {}
     for symbol in symbols:

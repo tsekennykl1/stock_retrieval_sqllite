@@ -1,46 +1,104 @@
 import requests
 import json
 from datetime import datetime, timedelta
-from s3_db_sync import s3_db_wrapper
 
 # Import CRUD functions from your existing create_db.py
 from crud_db import (
-    get_portfolio,
+    get_latest_portfolio,
     insert_monthly_snapshot,
     get_monthly_snapshots,
     get_transactions, get_dividends,
     insert_monthly_pnl,get_monthly_pnl,update_monthly_pnl
 )
-from portfolio_performance import get_portfolio_performance_json
-from services.monthly_report_service import get_monthly_ledger
 
-#### filepath: /Users/kwokleungtse/Documents/AWS/stock_retrieval_sqllite/monthly_performance.py
-# ...existing code...
-API_URL = "https://z35lnmmzgi.execute-api.ap-east-1.amazonaws.com/prod/stock?stocks="
-
-def fetch_current_prices(symbols):
-    """Fetch current stock prices from the API."""
-    if not symbols: return {}
+from services.price_service import fetch_current_prices
+from services.monthly_ledger_service import retrieve_monthly_pnl
     
-    try:
-        response = requests.get(f"{API_URL}{','.join(symbols)}", timeout=(3, 10))
-        prices = {}
-        if response.status_code == 200:
-            data = response.json()
-            for key, val in data.items():
-                if isinstance(val, dict):
-                    # Fetch directly from the "price" attribute in the new JSON format
-                    prices[key] = float(val.get('price', 0.0))
-                else:
-                    try: prices[key] = float(val)
-                    except (TypeError, ValueError): prices[key] = 0.0
-        return prices
-    except requests.RequestException as e:
-        print(f"Error fetching prices: {e}")
-        return {}
+def get_portfolio_performance(print_html=False):
+    holdings = get_latest_portfolio()
+
+    if not holdings:
+        return json.dumps({"message": "Portfolio is empty.", "holdings": [], "summary": {}})
+
+    # Extract symbols for API call
+    symbols = [holding['stock_symbol'] for holding in holdings]
+    
+    prices = fetch_current_prices(symbols)
+
+        
+    total_invested_portfolio = 0.0
+    total_current_value_portfolio = 0.0
+    
+    result = {
+        "holdings": [],
+        "summary": {}
+    }
+
+    if print_html:
+        print("\n" + "="*95)
+        print(f"{'Symbol':<10} | {'Qty':<10} | {'Avg Price':<10} | {'Curr Price':<10} | {'Invested':<12} | {'Curr Value':<12} | {'G/L ($)':<10} | {'G/L (%)':<8}")
+        print("-" * 95)
 
 
-def calculate_monthly_performance(year_month, print_table=False):
+    for item in holdings:
+        symbol = item['stock_symbol']
+        qty = float(item['total_quantity'])
+        avg_price = float(item['average_price'])
+
+        invested = float(item['total_invested'])
+        
+        # ✅ Fetch stock_data dictionary instead of just a float
+        stock_data = prices.get(symbol, {}) or {}
+        curr_price = float(stock_data.get("price", 0.0) or -0.01)
+        api_short_name = stock_data.get("shortName_en", "") or ""
+        
+        # Fallback to database stock_name if API doesn't provide it
+        final_short_name = api_short_name if api_short_name else item.get('stock_name', '')
+        
+        curr_value = qty * curr_price
+        
+        gl_amount = curr_value - invested
+        gl_pct = (gl_amount / invested * 100) if invested > 0 else 0.0
+
+        total_invested_portfolio += invested
+        total_current_value_portfolio += curr_value
+
+        if print_html:
+            print(f"{symbol:<10} | {qty:<10.2f} | {avg_price:<10.2f} | {curr_price:<10.2f} | {invested:<12.2f} | {curr_value:<12.2f} | {gl_amount:<10.2f} | {gl_pct:>7.2f}%")
+
+        result["holdings"].append({
+            "symbol": symbol,
+            "shortName_en": final_short_name,
+            "quantity": round(qty, 2),
+            "avg_price": round(avg_price, 2),
+            "current_price": round(curr_price, 2),
+            "total_invested": round(invested, 2),
+            "current_value": round(curr_value, 2),
+            "gain_loss_amount": round(gl_amount, 2),
+            "gain_loss_percentage": round(gl_pct, 2)
+        })
+
+    portfolio_gl_amount = total_current_value_portfolio - total_invested_portfolio
+
+
+    portfolio_gl_pct = (portfolio_gl_amount / total_invested_portfolio * 100) if total_invested_portfolio > 0 else 0.0
+
+
+    if print_html:
+        print("-" * 95)
+        print(f"{'TOTALS':<48} | {total_invested_portfolio:<12.2f} | {total_current_value_portfolio:<12.2f} | {portfolio_gl_amount:<10.2f} | {portfolio_gl_pct:>7.2f}%")
+        print("="*95 + "\n")
+
+    result["summary"] = {
+        "total_invested": round(total_invested_portfolio, 2),
+        "total_current_value": round(total_current_value_portfolio, 2),
+        "total_gain_loss_amount": round(portfolio_gl_amount, 2),
+        "total_gain_loss_percentage": round(portfolio_gl_pct, 2)
+    }
+
+    return json.dumps(result, indent=4)
+
+def calculate_monthly_performance(year_month, current_prices= None, print_table=False):
     """Calculate performance against the monthly snapshot, factoring in transactions."""
     
     # 1. Get Snapshot via create_db CRUD
@@ -107,8 +165,9 @@ def calculate_monthly_performance(year_month, print_table=False):
             performance[sym]['realized_gl'] += round((price - performance[sym]['running_cb']) * qty, 2)
             performance[sym]['running_qty'] -= qty
 
-    # 3. Get Current Prices
-    current_prices = fetch_current_prices(list(symbols_to_fetch))
+    # 3. Get Current Prices if None
+    if current_prices is None:
+        current_prices = fetch_current_prices(list(symbols_to_fetch))
     if print_table: 
         print(f"\n📊 Monthly Performance Report for {year_month}")
         print("="*120)
@@ -126,10 +185,15 @@ def calculate_monthly_performance(year_month, print_table=False):
     }
 
     # ✅ Add missing for-loop and accurately output the adjusted data
+    print(f"Performance: {performance}")
+
     for sym, data in performance.items():
         # Adjusted end-of-month quantity
         end_qty = max(0, data['running_qty'])
         curr_price = current_prices.get(sym, 0.0)
+
+        stock_data = current_prices.get(sym, {}) or {}
+        curr_price = float(stock_data.get("price", 0.0) or 0.0)
         curr_val = end_qty * curr_price
         
         # Net Difference: (Current Value + Cash Out from Sells) - (Start Value + Cash In for Buys)
@@ -198,9 +262,9 @@ def calculate_monthly_dividends(year_month,print_table=False):
     return total_dividends
 
 
-def value_fresh(current_month):
+def proceed_fresh(current_month):
 
-    portfolio = get_portfolio_performance_json(print_html=False)
+    portfolio = get_portfolio_performance(print_html=False)
     print(f"\n--- Portfolio Performance for {current_month} ---")
     print(portfolio)
     monthly_performance = calculate_monthly_performance(current_month, print_table=False)
@@ -213,10 +277,26 @@ def value_fresh(current_month):
     
 
     # When you call the function, it returns a JSON string
-    ledger_json_string = get_monthly_ledger(current_month)
+    #ledger_json_string = get_monthly_pnl(current_month)
 
+    ledger_json_string = retrieve_monthly_pnl(current_month)
+    print(f"ledger_json_string {ledger_json_string}")
+    
+    
+    
+    
+    
     # Convert the JSON string back into a Python dictionary
-    monthly_ledger = json.loads(ledger_json_string)
+    monthly_ledger_list = json.loads(ledger_json_string)
+
+    if not monthly_ledger_list:
+        raise Exception(f"Monthly ledger is empty for {current_month}")
+
+    monthly_ledger = monthly_ledger_list[0]  # <-- take the single row dict
+
+    income = float(monthly_ledger.get("income", 0.0) or 0.0)
+    expenses = float(monthly_ledger.get("expenses", 0.0) or 0.0)
+    print(f"monthly_ledger = {monthly_ledger}")
 
     last_month = (datetime.strptime(current_month, '%Y-%m') - timedelta(days=1)).strftime('%Y-%m')
     print(f"\n✅ Monthly P&L entry for {current_month} inserted successfully. Previous month: {last_month}")
@@ -229,8 +309,8 @@ def value_fresh(current_month):
     
     insert_monthly_pnl(year_month=current_month,
         open_bal=open_balance_this_month,
-        income=monthly_ledger['Total_Income'],
-        expenses=monthly_ledger['Total_Expense'],
+        income=income,
+        expenses=expenses,
         stock_pnl=monthly_performance['totals']['total_net_diff'],
         dividend=dividends
     )
@@ -256,35 +336,6 @@ def value_fresh(current_month):
     print(json.dumps(monthly_pnl, indent=4))
     print("\n✅ Monthly P&L summary retrieved successfully.")
     
-def lambda_handler(event=None, context=None):
-    """AWS Lambda Entry Point"""
-
-    event = event or {}
-    action = event.get("action", "value_fresh")  # default action
-
-    with s3_db_wrapper():
-        current_month = datetime.now().strftime('%Y-%m')
-
-        try:
-            if action == "portfolio":
-                body = json.loads(get_portfolio_performance_json(print_html=False))
-                return {"statusCode": 200, "body": json.dumps(body)}
-
-            elif action == "monthly":
-                perf = calculate_monthly_performance(current_month, print_table=False)
-                return {"statusCode": 200, "body": json.dumps(perf)}
-
-            elif action == "value_fresh":
-                # your existing function prints + inserts pnl
-                value_fresh(current_month=current_month)
-                return {"statusCode": 200, "body": json.dumps({"message": "value_fresh completed", "year_month": current_month})}
-
-            else:
-                return {"statusCode": 400, "body": json.dumps({"error": f"Unknown action '{action}'"})}
-
-        except Exception as e:
-            print(f"lambda_handler error: {e}")
-            return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
 
 
 
@@ -299,4 +350,4 @@ if __name__ == "__main__":
  #       snapshot_beginning_of_month(current_month)
  #   elif choice == '2':
 
-    value_fresh(current_month=current_month)
+    proceed_fresh(current_month=current_month)

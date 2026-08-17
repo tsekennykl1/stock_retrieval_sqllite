@@ -2,7 +2,7 @@ import json
 import os
 
 os.environ.setdefault("AWS_REGION", "ap-east-1")
-os.environ.setdefault("STOCK_RETRIEVAL_FUNCTION_NAME", "stock_retrieval_lambda")
+os.environ.setdefault("STOCK_RETRIEVAL_FUNCTION_NAME", "stock-price-retrieval")
 
 from lambda_consolidated_monthly_report import lambda_handler
 
