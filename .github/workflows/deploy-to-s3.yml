@@ -279,16 +279,6 @@ jobs:
             echo "✅ Done: ${function_name}"
           }
 
-          # ── lambda_monthly_pnl ─────────────────────────────────────────────
-          deploy_lambda "lambda_monthly_pnl" 60 256 \
-            --env \
-              "DB_PATH=/mnt/efs/mystocks.db" \
-              "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
-            --files \
-              "lambda_monthly_pnl.py" \
-              "crud_db.py" \
-              "services"
-
           # ── lambda_s3_to_efs ───────────────────────────────────────────────
           deploy_lambda "lambda_s3_to_efs" 60 256 \
             --env \
@@ -296,17 +286,6 @@ jobs:
               "EFS_PATH=/mnt/efs" \
             --files \
               "lambda_s3_to_efs.py"
-
-          # ── lambda_portfolio_performance ──────────────────────────────────
-          deploy_lambda "lambda_portfolio_performance" 60 256 \
-            --env \
-              "DB_PATH=/mnt/efs/mystocks.db" \
-              "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
-            --files \
-              "lambda_portfolio_performance.py" \
-              "crud_db.py" \
-              "portfolio_performance.py" \
-              "services"
 
           # ── consolidated monthly report ───────────────────────────────────
           deploy_lambda "lambda_consolidated_monthly_report" 60 256 \
