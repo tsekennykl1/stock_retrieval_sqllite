@@ -1,7 +1,7 @@
 # services/portfolio_service.py
 import json
 
-from crud_db import get_latest_portfolio
+from crud_db import get_latest_portfolio, get_all_portfolio_entries
 from services.price_service import fetch_current_prices, fetch_current_prices_lambda
 
 
@@ -11,6 +11,10 @@ def get_portfolio_holdings_json(print_html: bool = False) -> str:
     but implemented as a reusable service.
     """
     holdings = get_latest_portfolio()
+
+    all_entries = get_all_portfolio_entries()
+    print(f"Retrieved {len(all_entries)} portfolio entries from the database.\n")
+    print(f"{all_entries}")
 
     if not holdings:
         return json.dumps({"message": "Portfolio is empty.", "holdings": [], "summary": {}})

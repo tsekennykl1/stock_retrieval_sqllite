@@ -204,6 +204,19 @@ def delete_portfolio(portfolio_id):
     conn.commit()
     print(f"🗑️  Portfolio entry with ID '{portfolio_id}' removed!")
     conn.close()
+    
+def get_all_portfolio_entries():
+    """Get all portfolio entries, including historical ones."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, stock_symbol, quantity, avg_buy_price, total_invested, trading_date, transaction_reference_id
+        FROM portfolio
+        ORDER BY trading_date DESC, stock_symbol
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
 def get_portfolio():
     """Get full portfolio with stock details."""
@@ -245,9 +258,10 @@ def get_latest_portfolio():
         )
         WHERE rn = 1
         AND quantity > 0
-        ORDER BY latest_trading_date DESC, stock_symbol;
+        ORDER BY latest_trading_date DESC, stock_symbol
     """)
     rows = cursor.fetchall()
+    print(f"rows = {[dict(row) for row in rows]}")
     conn.close()
 
 

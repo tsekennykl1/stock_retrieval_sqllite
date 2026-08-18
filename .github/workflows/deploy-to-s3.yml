@@ -300,20 +300,23 @@ jobs:
               "crud_db.py" \
               "services" \
               "s3_db_sync.py"
-      # ── Trigger S3-to-EFS copy Lambda ──────────────────────────────────────
+
+
+      # ── OPTIONAL: Trigger S3-to-EFS copy Lambda ───────────────────────────
+      # Enable only when you really want to overwrite the DB on EFS.
       - name: Trigger S3-to-EFS copy Lambda
         run: |
           echo "🚀 Invoking lambda_s3_to_efs to copy mystocks.db to EFS..."
-
+      
           aws lambda invoke \
             --function-name lambda_s3_to_efs \
             --payload '{}' \
             --cli-binary-format raw-in-base64-out \
             response.json
-
+      
           echo "Lambda response:"
           cat response.json
-
+      
           # Fail pipeline if Lambda returned non-200
           STATUS=$(python3 -c "
           import json
@@ -321,10 +324,12 @@ jobs:
               d = json.load(f)
           print(d.get('statusCode', 500))
           ")
-
+      
+          STATUS=$(python3 -c "import json;print(json.load(open('response.json')).get('statusCode',500))")
           if [ "$STATUS" != "200" ]; then
             echo "❌ S3-to-EFS copy failed with status: $STATUS"
             exit 1
           fi
-
+      
           echo "✅ mystocks.db successfully copied to EFS!"
+      
