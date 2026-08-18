@@ -297,10 +297,7 @@ jobs:
             --files \
               "lambda_consolidated_monthly_report.py" \
               "crud_db.py" \
-              "monthly_performance.py" \
-              "portfolio_performance.py" \
-              "services" \
-              "s3_db_sync.py"
+              "services" 
       # ── Trigger S3-to-EFS copy Lambda ──────────────────────────────────────
       - name: Trigger S3-to-EFS copy Lambda
         run: |
