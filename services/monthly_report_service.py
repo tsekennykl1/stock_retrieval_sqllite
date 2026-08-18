@@ -201,4 +201,5 @@ def build_monthly_report(year_month: str ) -> dict:
 
 if __name__ == "__main__":
     current_month = datetime.now().strftime('%Y-%m')
-    print(json.dumps(build_monthly_report(current_month)["all_monthly_pnl"][0]))
+    #print(json.dumps(build_monthly_report(current_month)["all_monthly_pnl"][0]))
+    print(json.dumps(build_monthly_report(current_month), indent=4))
