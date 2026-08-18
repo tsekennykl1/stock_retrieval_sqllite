@@ -4,18 +4,25 @@ from calendar import monthrange
 import os
 
 # Dynamically set DB path (Defaults to local mystocks.db, overwritten in Lambda)
-
 DB_PATH = "mystocks.db"
 if "AWS_LAMBDA_FUNCTION_NAME" in os.environ:
     DB_PATH = os.environ.get("DB_PATH", "/tmp/mystocks.db")
 
 
-# CRUD for all table operations
+print(f"Using database path: {DB_PATH}")
+
+
+
 def get_month_str(_date=None):
     """Convert a transaction date to 'yyyy-mm' format, or use the current date if not provided."""
     if _date:
         if isinstance(_date, datetime):
-            return _date.strftime("%Y-%m-%d %H:%M:%S"), _date.strftime("%Y-%m")
+
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y-%m", "%Y/%m/%d", "%Y/%m"):
+                try:
+                    return datetime.strptime(_date, fmt).strftime("%Y-%m-%d %H:%M:%S"), datetime.strptime(_date, fmt).strftime("%Y-%m")
+                except ValueError:
+                    continue
 
         try:
             if isinstance(_date, str):
@@ -51,21 +58,29 @@ def get_connection():
 #  STOCKS CRUD
 # ══════════════════════════════════════════════════════════════
 
-def insert_stock(symbol, name, sector, currency):
-    """Insert a new stock into the stocks table."""
+def insert_mortgage_monthly(principal, interest, remaining_balance, year_month=None, period=None):
+    """Insert or update a mortgage monthly entry."""
     conn = get_connection()
     cursor = conn.cursor()
-    try:
-        cursor.execute("""
-            INSERT INTO stocks (symbol, name, sector, currency)
-            VALUES (?, ?, ?, ?)
-        """, (symbol.upper(), name, sector, currency))
-        conn.commit()
-        print(f"✅ Stock '{symbol.upper()}' added!")
-    except sqlite3.IntegrityError:
-        print(f"⚠️  Stock '{symbol.upper()}' already exists!")
-    finally:
-        conn.close()
+    if period is None:
+        if year_month:
+            period = convertYearMonth(year_month)
+        else:
+            period = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # Default to current date if neither is provided
+            year_month = datetime.now().strftime("%Y-%m")  # Default to current month if year_month is not provided
+    else:
+        period, year_month = get_month_str(period)
+    
+    # Calculate total payment
+    total_payment = principal + interest
+    
+    cursor.execute("""
+        INSERT OR REPLACE INTO mortgage (year_month, principal, interest, total_payment, remaining_balance, period)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (year_month, principal, interest, total_payment, remaining_balance, period))
+    conn.commit()
+    print(f"✅ Mortgage monthly entry for '{year_month}' added!")
+    conn.close()
 
 def get_stock(symbol):
     """Retrieve a stock's details by its symbol."""
@@ -215,32 +230,27 @@ def get_portfolio():
 
 
 def get_latest_portfolio():
+    print("Fetching latest portfolio entries...")
     """Get all portfolio symbols with the latest trading_date, stock name, average price, and quantity > 0."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT p.stock_symbol,
-            s.name AS stock_name,
-            p.trading_date AS latest_trading_date,
-            p.avg_buy_price AS average_price,
-            p.quantity AS total_quantity,
-            (p.quantity * p.avg_buy_price) AS total_invested
+        SELECT p.stock_symbol, s.name as stock_name, MAX(p.trading_date) as latest_trading_date,
+               AVG(p.avg_buy_price) as average_price, p.quantity as total_quantity, p.total_invested
         FROM portfolio p
         JOIN stocks s ON p.stock_symbol = s.symbol
-        JOIN (
-            SELECT stock_symbol, MAX(trading_date) AS max_date
-            FROM portfolio
-            GROUP BY stock_symbol
-        ) latest
-        ON p.stock_symbol = latest.stock_symbol AND p.trading_date = latest.max_date
         WHERE p.quantity > 0
-        ORDER BY p.trading_date DESC
+        GROUP BY p.stock_symbol, s.name
+        ORDER BY latest_trading_date DESC
     """)
     rows = cursor.fetchall()
+    print(f"Retrieved {len(rows)} portfolio entries from the database.")
+    print([dict(row) for row in rows])
     conn.close()
 
-    return [dict(row) for row in rows]
 
+
+    return [dict(row) for row in rows]
 
 # ══════════════════════════════════════════════════════════════
 #  TRANSACTIONS CRUD
@@ -696,7 +706,8 @@ def get_monthly_pnl(year_month=None, pnl_date=None):
         params.append(pnl_date)
         
     query += " ORDER BY year_month DESC"
-  
+    print(f"Executing query: {query} with params: {params}")  # Debugging line
+
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
@@ -723,7 +734,7 @@ def update_monthly_pnl(year_month, open_bal=None, income=None, expenses=None, st
         fields.append("dividend = ?")
         values.append(dividend)
     if pnl_date is not None:
-        fields.append("pnl_date = ?")
+        fields.append("pnl_date >= ?")
         values.append(pnl_date)
         
     if not fields:
@@ -757,7 +768,7 @@ def delete_monthly_pnl(year_month):
     else:
         print(f"🗑️  PnL entry for '{year_month}' deleted!")
     conn.close()
-'''
+
 # ══════════════════════════════════════════════════════════════
 #  MORTGAGE CRUD
 # ══════════════════════════════════════════════════════════════
@@ -857,7 +868,7 @@ def delete_mortgage_monthly(year_month):
     else:
         print(f"🗑️  Mortgage monthly entry for '{year_month}' deleted!")
     conn.close()
-'''
+
 # ══════════════════════════════════════════════════════════════
 #  LEDGER CRUD
 # ══════════════════════════════════════════════════════════════
@@ -906,6 +917,9 @@ def get_ledger_entries(start_date=None, end_date=None, type=None, category=None,
     if month_str:
         query += " AND month_str = ?"
         params.append(month_str)
+    if start_date:
+        query += " AND datetime >= ?"
+        params.append(start_date)
         
     query += " ORDER BY datetime DESC"
     
@@ -971,10 +985,14 @@ def delete_ledger_entry(entry_id):
 # ══════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     # Example usage of CRUD operations for each table
+    print("=== PORTFOLIO ===")
+
+    print(get_latest_portfolio())
+
     '''
     # STOCKS CRUD
     print("=== STOCKS ===")
-
+    
 
     # STOCKS CRUD
     print("=== STOCKS ===")
