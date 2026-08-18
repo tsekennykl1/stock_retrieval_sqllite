@@ -41,7 +41,7 @@ def get_portfolio_holdings_json(print_html: bool = False) -> str:
 
     for item in holdings:
         symbol = item["stock_symbol"]
-        qty = float(item["total_quantity"])
+        qty = float(item["quantity"])
         avg_price = float(item["average_price"])
         invested = float(item["total_invested"])
 

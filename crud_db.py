@@ -9,10 +9,6 @@ if "AWS_LAMBDA_FUNCTION_NAME" in os.environ:
     DB_PATH = os.environ.get("DB_PATH", "/tmp/mystocks.db")
 
 
-print(f"Using database path: {DB_PATH}")
-
-
-
 def get_month_str(_date=None):
     """Convert a transaction date to 'yyyy-mm' format, or use the current date if not provided."""
     if _date:
@@ -230,22 +226,28 @@ def get_portfolio():
 
 
 def get_latest_portfolio():
-    print("Fetching latest portfolio entries...")
     """Get all portfolio symbols with the latest trading_date, stock name, average price, and quantity > 0."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT p.stock_symbol, s.name as stock_name, MAX(p.trading_date) as latest_trading_date,
-               AVG(p.avg_buy_price) as average_price, p.quantity as total_quantity, p.total_invested
+        SELECT id,stock_symbol,
+            trading_date AS latest_trading_date,
+            quantity,
+            avg_buy_price AS average_price,
+            total_invested
+        FROM (
+        SELECT p.*,
+                ROW_NUMBER() OVER (
+                PARTITION BY stock_symbol
+                ORDER BY id DESC
+                ) AS rn
         FROM portfolio p
-        JOIN stocks s ON p.stock_symbol = s.symbol
-        WHERE p.quantity > 0
-        GROUP BY p.stock_symbol, s.name
-        ORDER BY latest_trading_date DESC
+        )
+        WHERE rn = 1
+        AND quantity > 0
+        ORDER BY latest_trading_date DESC, stock_symbol;
     """)
     rows = cursor.fetchall()
-    print(f"Retrieved {len(rows)} portfolio entries from the database.")
-    print([dict(row) for row in rows])
     conn.close()
 
 
@@ -706,7 +708,6 @@ def get_monthly_pnl(year_month=None, pnl_date=None):
         params.append(pnl_date)
         
     query += " ORDER BY year_month DESC"
-    print(f"Executing query: {query} with params: {params}")  # Debugging line
 
     cursor.execute(query, params)
     rows = cursor.fetchall()

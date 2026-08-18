@@ -144,8 +144,6 @@ def get_monthly_performance(year_month,  print_table=False, current_prices=None,
 
     return result
 
-
-
 def build_monthly_report(year_month: str ) -> dict:
     
     if not year_month:
@@ -163,8 +161,10 @@ def build_monthly_report(year_month: str ) -> dict:
     
     ledger_rows = json.loads(retrieve_monthly_pnl(year_month))
     ledger = ledger_rows[0] if ledger_rows else {}
-    # Dividends total
-    dividends_total = float(calculate_monthly_dividends(year_month))
+    
+    # Dividends total - now extracts from the returned dictionary
+    dividend_data = calculate_monthly_dividends(year_month)
+    dividends_total = float(dividend_data.get("total_dividends", 0.0))
     
     # Open balance from previous month close
     last_month = (datetime.strptime(year_month, "%Y-%m") - timedelta(days=1)).strftime("%Y-%m")
@@ -189,18 +189,13 @@ def build_monthly_report(year_month: str ) -> dict:
     # Read back computed columns
     all_pnl = get_monthly_pnl()
     
-    # Round floats for clean output
-    #for k, v in list(all_pnl.items()):
-    #    if isinstance(v, float):
-    #        all_pnl[k] = round(v, 2)
-    
     return {
         "year_month": year_month,
         "previous_month": last_month,
         "portfolio_performance": holdings,
         "monthly_performance": monthly_perf,
         "monthly_ledger": ledger,
-        "dividends_total": round(dividends_total, 2),
+        "dividends": dividend_data,
         "all_monthly_pnl": all_pnl
     }
 
