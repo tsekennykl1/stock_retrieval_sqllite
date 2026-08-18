@@ -67,8 +67,7 @@ def fetch_current_prices_lambda(symbols: list[str], max_retries: int = 1) -> dic
             time.sleep(sleep_s)
 
 
-#### filepath: /Users/kwokleungtse/Documents/AWS/stock_retrieval_sqllite/monthly_performance.py
-# ...existing code...
+
 API_URL = "https://z35lnmmzgi.execute-api.ap-east-1.amazonaws.com/prod/stock?stocks="
 
 def fetch_current_prices(symbols) -> dict:
