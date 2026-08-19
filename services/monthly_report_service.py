@@ -2,8 +2,8 @@
 import json
 from datetime import datetime, timedelta
 
-from crud_db import get_monthly_pnl, insert_monthly_pnl, get_transactions, get_monthly_snapshots
-from services.monthly_ledger_service import retrieve_monthly_pnl
+from crud_db import get_monthly_pnl, insert_monthly_pnl, get_transactions, get_monthly_snapshots, get_all_portfolio_entries
+from services.monthly_ledger_service import retrieve_monthly_ledger
 from services.monthly_dividend_service import calculate_monthly_dividends
 from services.portfolio_service import get_portfolio_holdings_json
 from services.price_service import fetch_current_prices, fetch_current_prices_lambda 
@@ -159,8 +159,10 @@ def build_monthly_report(year_month: str ) -> dict:
         raise Exception(f"Monthly performance is empty. Missing snapshot for previous month of {year_month}.")
     
     
-    ledger_rows = json.loads(retrieve_monthly_pnl(year_month))
-    ledger = ledger_rows[0] if ledger_rows else {}
+    ledger= json.loads(retrieve_monthly_ledger(year_month))
+    ledger_entries = ledger.get("Ledger_entries", [])
+    income = float(ledger.get("Income_total", -0.01) or -0.01)
+    expenses = float(ledger.get("Expenses_total", -0.01) or -0.01)
     
     # Dividends total - now extracts from the returned dictionary
     dividend_data = calculate_monthly_dividends(year_month)
@@ -170,10 +172,6 @@ def build_monthly_report(year_month: str ) -> dict:
     last_month = (datetime.strptime(year_month, "%Y-%m") - timedelta(days=1)).strftime("%Y-%m")
     last_month_rows = get_monthly_pnl(year_month=last_month)
     open_bal = float(last_month_rows[0]["close_bal"]) if last_month_rows else 0.0
-    
-    income = float(ledger.get("income", -0.01) or -0.01)
-    expenses = float(ledger.get("expenses", -0.01) or -0.01)
-
     stock_pnl = float(monthly_perf["totals"]["total_net_diff"])
      
     # Insert/update current month PnL

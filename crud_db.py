@@ -204,7 +204,7 @@ def delete_portfolio(portfolio_id):
     conn.commit()
     print(f"🗑️  Portfolio entry with ID '{portfolio_id}' removed!")
     conn.close()
-    
+
 def get_all_portfolio_entries():
     """Get all portfolio entries, including historical ones."""
     conn = get_connection()
@@ -261,7 +261,6 @@ def get_latest_portfolio():
         ORDER BY latest_trading_date DESC, stock_symbol
     """)
     rows = cursor.fetchall()
-    print(f"rows = {[dict(row) for row in rows]}")
     conn.close()
 
 
@@ -458,7 +457,6 @@ def delete_watchlist(symbol):
     cursor = conn.cursor()
     cursor.execute("DELETE FROM watchlist WHERE stock_symbol = ?", (symbol.upper(),))
     conn.commit()
-    print(f"🗑️  '{symbol.upper()}' removed from watchlist!")
     conn.close()
 
 def get_watchlist():
@@ -681,6 +679,7 @@ def delete_monthly_snapshot(year_month, stock_symbol):
 
 def insert_monthly_pnl( open_bal, income, expenses, stock_pnl, dividend, year_month = None,pnl_date=None):
     """Insert or update a monthly PnL entry."""
+    
     conn = get_connection()
     cursor = conn.cursor()
     if pnl_date is None:
