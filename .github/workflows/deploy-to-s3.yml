@@ -20,12 +20,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Use Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: "npm"
-
       - name: Set up Python (build env matches Lambda runtime)
         uses: actions/setup-python@v5
         with:
