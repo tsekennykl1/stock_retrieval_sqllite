@@ -346,14 +346,18 @@ def extract_payload(event: dict) -> dict:
     return event
 
 
-def extract_route(event: dict) -> tuple:
+def extract_route(event: dict, parsed_body: dict = None) -> tuple:
     """
     Extract (resource, action) from path parameters or from the payload.
     Supports:
       - API Gateway path: /crud/{resource}/{action}
-      - Direct event keys: {"resource": "...", "action": "..."}
+      - JSON body keys: {"resource_name": "...", "action": "..."}
+      - Direct event keys: {"resource_name": "...", "action": "..."}
     """
-    # Try path parameters first (API Gateway proxy integration)
+    if parsed_body is None:
+        parsed_body = {}
+
+    # 1. Try path parameters first (API Gateway proxy integration)
     path_params = event.get("pathParameters") or {}
     resource = path_params.get("resource")
     action = path_params.get("action")
@@ -361,7 +365,14 @@ def extract_route(event: dict) -> tuple:
     if resource and action:
         return resource.lower(), action.lower()
 
-    # Fallback: check top-level event (for Lambda console / direct invoke)
+    # 2. Check parsed body (API Gateway POST with JSON body)
+    resource = parsed_body.get("resource_name") or parsed_body.get("resource")
+    action = parsed_body.get("action")
+
+    if resource and action:
+        return resource.lower(), action.lower()
+
+    # 3. Fallback: check top-level event (for Lambda console / direct invoke)
     resource = event.get("resource_name") or event.get("resource")
     action = event.get("action")
 
@@ -370,33 +381,42 @@ def extract_route(event: dict) -> tuple:
 
     return None, None
 
-
 # ══════════════════════════════════════════════════════════════
 #  LAMBDA HANDLER
 # ══════════════════════════════════════════════════════════════
 
 def lambda_handler(event, context):
-    """
-    Unified CRUD Lambda handler.
     
-    Expected request format (direct invoke or API Gateway POST body):
-    {
-        "resource_name": "portfolio" | "transaction" | "ledger" | "monthly_pnl" | "dividend" | "snapshot" | "mortgage" | "stock" | "watchlist",
-        "action": "insert" | "update" | "delete" | "get" | "get_all",
-        "payload": { ... fields specific to the resource ... }
-    }
+
+    # ─── Handle CORS preflight ─────────────────────────────
+    http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
+    if not http_method:
+        http_method = event.get("httpMethod", "")
     
-    Or via API Gateway REST with path /crud/{resource}/{action} and JSON body as payload.
-    """
-    print(f"📥 CRUD Lambda received event: {json.dumps(event, default=str)}")
+    if http_method.upper() == "OPTIONS":
+        return {
+            "statusCode": 200,
+            "headers": {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+            },
+            "body": "",
+        }
+    # ───────────────────────────────────────────────────────
 
     try:
-        resource, action = extract_route(event)
-        payload = extract_payload(event).get("payload") or extract_payload(event)
+        # Parse body for API Gateway events
+        parsed_body = extract_payload(event)
 
-        # Remove routing keys from payload if present (so they don't interfere)
-        for key in ("resource_name", "resource", "action", "payload"):
-            payload.pop(key, None)
+        # Extract route from path params OR parsed body
+        resource, action = extract_route(event, parsed_body)
+
+        # Extract the nested payload (or use the body minus routing keys)
+        payload = parsed_body.get("payload") if isinstance(parsed_body.get("payload"), dict) else {}
+        if not payload:
+            # Fallback: use parsed body but strip routing keys
+            payload = {k: v for k, v in parsed_body.items() if k not in ("resource_name", "resource", "action", "operation", "payload")}
 
         if not resource or not action:
             return _response(400, {"error": "Missing 'resource_name' and/or 'action' in the request."})
@@ -420,6 +440,11 @@ def lambda_handler(event, context):
                 "missing_fields": missing,
             })
 
+        # Validation service
+        errors = validate_payload(resource, payload)
+        if errors:
+            return _response(400, {"error": "Validation failed", "details": errors})
+
         # Execute within S3 sync wrapper (or locally)
         if LOCAL_DEV:
             result = route["handler"](payload)
@@ -433,13 +458,7 @@ def lambda_handler(event, context):
             "resource": resource,
             "action": action,
         }
-        
-        # ... inside lambda_handler, before route["handler"](payload):
-        errors = validate_payload(resource, payload)
-        if errors:
-            return _response(400, {"error": "Validation failed", "details": errors})
 
-        # If the handler returns data (e.g., get operations), include it
         if result is not None:
             if isinstance(result, list):
                 response_body["data"] = result
@@ -456,7 +475,6 @@ def lambda_handler(event, context):
         import traceback
         traceback.print_exc()
         return _response(500, {"error": str(e)})
-
 
 def _response(status_code: int, body: dict) -> dict:
     """Standard API Gateway response."""

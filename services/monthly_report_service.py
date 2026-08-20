@@ -144,27 +144,33 @@ def get_monthly_performance(year_month,  print_table=False, current_prices=None,
 
     return result
 
-def build_monthly_report(year_month: str ) -> dict:
+def build_monthly_report(year_month: str) -> dict:
     
     if not year_month:
         year_month = datetime.now().strftime("%Y-%m")
     
     # Portfolio holdings (JSON string -> dict)
     holdings = json.loads(get_portfolio_holdings_json(print_html=False))
-    
 
-    # Monthly performance
-    monthly_perf = get_monthly_performance(year_month, print_table=False)
+    # ── Fetch current prices for all portfolio symbols ─────────
+    symbols = [h["symbol"] for h in holdings.get("holdings", [])]
+    market_data = fetch_current_prices_lambda(symbols) if symbols else {}
+
+    # Monthly performance (pass market_data to avoid duplicate API call)
+    monthly_perf = get_monthly_performance(year_month, print_table=False, current_prices=market_data)
     if not monthly_perf:
         raise Exception(f"Monthly performance is empty. Missing snapshot for previous month of {year_month}.")
-    
-    
-    ledger= json.loads(retrieve_monthly_ledger(year_month))
+
+    # ── Transactions for the month ─────────────────────────────
+    transactions = get_transactions(year_month=year_month)
+
+    # Ledger
+    ledger = json.loads(retrieve_monthly_ledger(year_month))
     ledger_entries = ledger.get("Ledger_entries", [])
     income = float(ledger.get("Income_total", -0.01) or -0.01)
     expenses = float(ledger.get("Expenses_total", -0.01) or -0.01)
     
-    # Dividends total - now extracts from the returned dictionary
+    # Dividends total
     dividend_data = calculate_monthly_dividends(year_month)
     dividends_total = float(dividend_data.get("total_dividends", 0.0))
     
@@ -191,12 +197,13 @@ def build_monthly_report(year_month: str ) -> dict:
         "year_month": year_month,
         "previous_month": last_month,
         "portfolio_performance": holdings,
+        "market_data": market_data,              # ← NEW: current stock prices
         "monthly_performance": monthly_perf,
+        "transactions": transactions,            # ← NEW: month's transactions
         "monthly_ledger": ledger,
         "dividends": dividend_data,
-        "all_monthly_pnl": all_pnl
+        "all_monthly_pnl": all_pnl,
     }
-
 if __name__ == "__main__":
     current_month = datetime.now().strftime('%Y-%m')
     #print(json.dumps(build_monthly_report(current_month)["all_monthly_pnl"][0]))
