@@ -113,7 +113,7 @@ def create_tables():
             close_bal REAL GENERATED ALWAYS AS (open_bal + monthly_gl) VIRTUAL
         )
     """)
-    '''
+    
     # ── Table 8: Mortgage Monthly Table ────────────────────────────────
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS mortgage (
@@ -125,7 +125,7 @@ def create_tables():
             remaining_balance REAL NOT NULL
         )
     """)
-    '''
+    
     # ── Table 9: Ledger (Income/Expense tracking) ────────────────────────
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS ledger (

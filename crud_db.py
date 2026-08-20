@@ -54,30 +54,6 @@ def get_connection():
 #  STOCKS CRUD
 # ══════════════════════════════════════════════════════════════
 
-def insert_mortgage_monthly(principal, interest, remaining_balance, year_month=None, period=None):
-    """Insert or update a mortgage monthly entry."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    if period is None:
-        if year_month:
-            period = convertYearMonth(year_month)
-        else:
-            period = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # Default to current date if neither is provided
-            year_month = datetime.now().strftime("%Y-%m")  # Default to current month if year_month is not provided
-    else:
-        period, year_month = get_month_str(period)
-    
-    # Calculate total payment
-    total_payment = principal + interest
-    
-    cursor.execute("""
-        INSERT OR REPLACE INTO mortgage (year_month, principal, interest, total_payment, remaining_balance, period)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (year_month, principal, interest, total_payment, remaining_balance, period))
-    conn.commit()
-    print(f"✅ Mortgage monthly entry for '{year_month}' added!")
-    conn.close()
-
 def get_stock(symbol):
     """Retrieve a stock's details by its symbol."""
     conn = get_connection()
@@ -163,14 +139,16 @@ def insert_portfolio(symbol, quantity, avg_buy_price, trading_date, transaction_
         conn.close()
 
 def update_portfolio(portfolio_id, quantity=None, avg_buy_price=None, trading_date=None, transaction_reference_id=None):
-    """Update portfolio holding for a stock with an optional transaction reference ID."""
     conn = get_connection()
     cursor = conn.cursor()
-    fields, values = [], []
-    if quantity is not None:      
+
+    fields = []
+    values = []
+
+    if quantity is not None:
         fields.append("quantity = ?")
         values.append(quantity)
-    if avg_buy_price is not None: 
+    if avg_buy_price is not None:
         fields.append("avg_buy_price = ?")
         values.append(avg_buy_price)
     if trading_date is not None:
@@ -179,21 +157,19 @@ def update_portfolio(portfolio_id, quantity=None, avg_buy_price=None, trading_da
     if transaction_reference_id is not None:
         fields.append("transaction_reference_id = ?")
         values.append(transaction_reference_id)
-    
+
+    # ❌ REMOVE this block — the column doesn't exist
+    # fields.append("updated_at = ?")
+    # values.append(datetime.now().isoformat())
+
     if not fields:
-        print("⚠️  No fields to update!")
-        return
-        
-    fields.append("updated_at = CURRENT_TIMESTAMP")
+        return {"message": "Nothing to update"}
+
     values.append(portfolio_id)
-    
     cursor.execute(f"UPDATE portfolio SET {', '.join(fields)} WHERE id = ?", values)
-    if cursor.rowcount == 0:
-        print(f"⚠️  Portfolio entry with ID '{portfolio_id}' not found!")
-    else:
-        print(f"✅ Portfolio entry with ID '{portfolio_id}' updated!")
     conn.commit()
-    conn.close()
+
+    return {"message": f"Portfolio entry {portfolio_id} updated", "rows_affected": cursor.rowcount}
 
 
 def delete_portfolio(portfolio_id):
@@ -748,7 +724,7 @@ def update_monthly_pnl(year_month, open_bal=None, income=None, expenses=None, st
         fields.append("dividend = ?")
         values.append(dividend)
     if pnl_date is not None:
-        fields.append("pnl_date >= ?")
+        fields.append("pnl_date = ?")
         values.append(pnl_date)
         
     if not fields:
@@ -787,25 +763,36 @@ def delete_monthly_pnl(year_month):
 #  MORTGAGE CRUD
 # ══════════════════════════════════════════════════════════════
 
-def insert_mortgage_monthly( principal, interest, remaining_balance,year_month=None, period=None):
+def insert_mortgage_monthly(principal, interest, remaining_balance, year_month=None, period=None):
     """Insert or update a mortgage monthly entry."""
     conn = get_connection()
-    cursor = conn.cursor()
-    if period is None:
-        if year_month:
-            period = convertYearMonth(year_month)
-        else:
-            period = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # Default to current date if neither is provided
-            year_month = datetime.now().strftime("%Y-%m")  # Default to current month if year_month is not provided
-    else:
-        period, year_month = get_month_str(period)
-    cursor.execute("""
-        INSERT OR REPLACE INTO mortgage (year_month, principal, interest, remaining_balance, period)
-        VALUES (?, ?, ?, ?, ?)
-    """, (year_month, principal, interest, remaining_balance, period))
-    conn.commit()
-    print(f"✅ Mortgage monthly entry for '{year_month}' added!")
-    conn.close()
+    try:
+        cursor = conn.cursor()
+
+        # Handle year_month default
+        if year_month is None:
+            year_month = datetime.now().strftime("%Y-%m")
+        elif len(year_month) > 7:
+            year_month = datetime.strptime(year_month, "%Y-%m-%d").strftime("%Y-%m")
+
+        cursor.execute("""
+            INSERT OR REPLACE INTO mortgage (year_month, principal, interest, remaining_balance, period)
+            VALUES (?, ?, ?, ?, ?)
+        """, (year_month, principal, interest, remaining_balance, period))
+        conn.commit()
+
+        return {
+            "message": f"Mortgage entry for '{year_month}' inserted/updated",
+            "id": cursor.lastrowid,
+            "year_month": year_month,
+            "period": period,
+            "total_payment": principal + interest
+        }
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 def get_mortgage_monthly(year_month=None, period=None):
     """Get all mortgage monthly entries, optionally filtered by year_month."""
@@ -931,9 +918,6 @@ def get_ledger_entries(start_date=None, end_date=None, type=None, category=None,
     if month_str:
         query += " AND month_str = ?"
         params.append(month_str)
-    if start_date:
-        query += " AND datetime >= ?"
-        params.append(start_date)
         
     query += " ORDER BY datetime DESC"
     

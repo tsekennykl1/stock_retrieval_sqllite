@@ -13,9 +13,6 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
 
-    # Node 20 deprecation fix:
-    # Do NOT force Node24 via FORCE_JAVASCRIPT_ACTIONS_TO_NODE24.
-    # Instead, pin to current major versions of actions that run on the runner-supported Node version (Node24 by default as of 2026-06-16).
     permissions:
       contents: read
 
@@ -23,10 +20,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Use Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+
       - name: Set up Python (build env matches Lambda runtime)
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install build tooling (zip)
         run: |
@@ -74,12 +77,9 @@ jobs:
           AWS_REGION:             ${{ secrets.AWS_REGION }}
           S3_BUCKET_NAME:         ${{ secrets.S3_BUCKET_NAME }}
           LAMBDA_ROLE_ARN:        ${{ secrets.LAMBDA_ROLE_ARN }}
-          VPC_SUBNET_IDS:         ${{ secrets.VPC_SUBNET_IDS }}        # comma-separated
+          VPC_SUBNET_IDS:         ${{ secrets.VPC_SUBNET_IDS }}
           VPC_SECURITY_GROUP_ID:  ${{ secrets.VPC_SECURITY_GROUP_ID }}
           EFS_ACCESS_POINT_ARN:   ${{ secrets.EFS_ACCESS_POINT_ARN }}
-
-          # Python 3.13 runtime setting:
-          # Your deploy script must read this env var (recommended) OR you must hardcode python3.13 in the script.
           LAMBDA_PY_RUNTIME:      python3.13
         shell: bash
         run: |
@@ -172,7 +172,6 @@ jobs:
 
           if not re.match(r"^sg-[0-9a-fA-F]+$", sg_id):
               print(f"Invalid security group ID: {sg_id}", file=sys.stderr)
-                  # note: keep existing behavior
               sys.exit(1)
 
           print(json.dumps({
@@ -201,7 +200,6 @@ jobs:
             local function_name="$1"
             local handler="${function_name}.lambda_handler"
 
-            # Use the runtime from env (set above). Defaults to python3.11 if not provided.
             local runtime="${LAMBDA_PY_RUNTIME:-python3.11}"
 
             local timeout="${2:-60}"
@@ -278,17 +276,27 @@ jobs:
 
             echo "✅ Done: ${function_name}"
           }
- 
+
           # ── lambda_s3_to_efs ───────────────────────────────────────────────
           deploy_lambda "lambda_s3_to_efs" 60 256 \
             --env \
-              "S3_BUCKET_NAME=s3general-148535751717-ap-east-1-an" \
+              "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
               "EFS_PATH=/mnt/efs" \
             --files \
               "lambda_s3_to_efs.py" \
-              "s3_db_sync.py" 
+              "s3_db_sync.py"
 
-          # ── consolidated monthly report ───────────────────────────────────
+          # ── lambda_crud_handler ────────────────────────────────────────────
+          deploy_lambda "lambda_crud_handler" 60 256 \
+            --env \
+              "DB_PATH=/mnt/efs/mystocks.db" \
+              "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
+            --files \
+              "lambda_crud_handler.py" \
+              "crud_db.py" \
+              "s3_db_sync.py"
+
+          # ── lambda_consolidated_monthly_report ─────────────────────────────
           deploy_lambda "lambda_consolidated_monthly_report" 60 256 \
             --env \
               "DB_PATH=/mnt/efs/mystocks.db" \
@@ -303,33 +311,24 @@ jobs:
 
 
       # ── OPTIONAL: Trigger S3-to-EFS copy Lambda ───────────────────────────
-      # Enable only when you really want to overwrite the DB on EFS.
       - name: Trigger S3-to-EFS copy Lambda
         run: |
           echo "🚀 Invoking lambda_s3_to_efs to copy mystocks.db to EFS..."
-      
+
           aws lambda invoke \
             --function-name lambda_s3_to_efs \
             --payload '{}' \
             --cli-binary-format raw-in-base64-out \
             response.json
-      
+
           echo "Lambda response:"
           cat response.json
-      
+
           # Fail pipeline if Lambda returned non-200
-          STATUS=$(python3 -c "
-          import json
-          with open('response.json') as f:
-              d = json.load(f)
-          print(d.get('statusCode', 500))
-          ")
-      
           STATUS=$(python3 -c "import json;print(json.load(open('response.json')).get('statusCode',500))")
           if [ "$STATUS" != "200" ]; then
             echo "❌ S3-to-EFS copy failed with status: $STATUS"
             exit 1
           fi
-      
+
           echo "✅ mystocks.db successfully copied to EFS!"
-      

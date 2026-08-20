@@ -77,6 +77,7 @@ def import_from_csv(target_table=None):
     for table in tables_to_import:
         csv_filename = os.path.join("csv", f"{table}.csv")
         
+        
         if not os.path.exists(csv_filename):
             print(f"⚠️  File '{csv_filename}' not found. Skipping import for '{table}'.")
             continue
