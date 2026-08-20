@@ -288,7 +288,10 @@ jobs:
             --files \
               "lambda_crud_handler.py" \
               "crud_db.py" \
+              "services" \
               "s3_db_sync.py"
+
+        
 
           # ── lambda_consolidated_monthly_report ─────────────────────────────
           deploy_lambda "lambda_consolidated_monthly_report" 60 256 \
