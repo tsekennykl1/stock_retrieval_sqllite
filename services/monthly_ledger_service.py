@@ -15,10 +15,10 @@ def retrieve_monthly_ledger(start_date):
         ledger = get_ledger_entries(month_str=start_date)
         #chage the date format to 'YYYY-MM-DD' for each entry and sort the ledger by date   
         ledger = sorted([{
-            "date": normalize_date(entry['date']),
+            "date": normalize_date(entry['datetime']),
             "type": entry['type'],
             "amount": entry['amount'],
-            "description": entry['description']
+            "description": entry['comment']
         } for entry in ledger], key=lambda x: x['date'])
         
         #calculate the total income and expenses for the month
