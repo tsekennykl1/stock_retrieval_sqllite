@@ -4,6 +4,7 @@ import os
 import time
 import random
 import requests
+from datetime import datetime
 
 import boto3
 from botocore.config import Config
@@ -27,10 +28,45 @@ RETRYABLE_CODES = {
     "RequestTimeoutException",
 }
 
+RETRIEVAL_DATETIME_FORMAT = "%Y-%m-%d %H:%M"
+
+
+def _extract_retrieval_datetime(data: dict) -> str:
+    """
+    Extract retrieval_datetime from the API/Lambda response.
+    Looks for common field names that might contain the retrieval timestamp.
+    If not found, returns current datetime formatted as 'YYYY-MM-DD HH:MM'.
+    """
+    if not isinstance(data, dict):
+        return datetime.now().strftime(RETRIEVAL_DATETIME_FORMAT)
+
+    # Check top-level fields that might hold retrieval datetime
+    for key in ("retrieval_datetime", "retrievalDatetime", "retrieval_date",
+                "timestamp", "retrieved_at", "lastUpdated", "last_updated"):
+        if key in data and data[key]:
+            raw_val = str(data[key]).strip()
+            # Try to parse and re-format to ensure consistent output
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S",
+                        "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S.%f",
+                        "%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%S%z"):
+                try:
+                    parsed = datetime.strptime(raw_val, fmt)
+                    return parsed.strftime(RETRIEVAL_DATETIME_FORMAT)
+                except ValueError:
+                    continue
+            # If parsing fails but value looks reasonable, return truncated
+            if len(raw_val) >= 16:
+                return raw_val[:16]
+            return raw_val
+
+    # Fallback: use current datetime
+    return datetime.now().strftime(RETRIEVAL_DATETIME_FORMAT)
+
 
 def fetch_current_prices_lambda(symbols: list[str], max_retries: int = 1) -> dict:
     """
     Invokes stock_retrieval_lambda and returns a dict keyed by symbol.
+    Includes 'retrieval_datetime' (YYYY-MM-DD HH:MM) at the top level.
     Expected return shape per symbol: dict with fields like price, shortName_en, etc.
     """
     if not symbols:
@@ -53,9 +89,25 @@ def fetch_current_prices_lambda(symbols: list[str], max_retries: int = 1) -> dic
             # unwrap API Gateway format if present
             if isinstance(raw, dict) and "body" in raw:
                 body = raw["body"]
-                return json.loads(body) if isinstance(body, str) else body
+                data = json.loads(body) if isinstance(body, str) else body
+            else:
+                data = raw
 
-            return raw
+            # Extract retrieval_datetime from response, fallback to now
+            retrieval_dt = _extract_retrieval_datetime(data)
+
+            # Ensure data is a dict and inject retrieval_datetime at the top
+            if isinstance(data, dict):
+                result = {"retrieval_datetime": retrieval_dt}
+                result.update(data)
+                # Remove the original retrieval key if it existed under a different name
+                # to avoid duplication (keep only our standardized key)
+                for key in ("retrievalDatetime", "retrieval_date", "timestamp",
+                            "retrieved_at", "lastUpdated", "last_updated"):
+                    result.pop(key, None)
+                return result
+            else:
+                return {"retrieval_datetime": retrieval_dt}
 
         except ClientError as e:
             code = e.response.get("Error", {}).get("Code", "")
@@ -69,8 +121,12 @@ def fetch_current_prices_lambda(symbols: list[str], max_retries: int = 1) -> dic
 
 API_URL = "https://z35lnmmzgi.execute-api.ap-east-1.amazonaws.com/prod/stock?stocks="
 
+
 def fetch_current_prices(symbols) -> dict:
-    """Fetch current stock prices from the API."""
+    """
+    Fetch current stock prices from the API.
+    Includes 'retrieval_datetime' (YYYY-MM-DD HH:MM) at the top level.
+    """
     if not symbols:
         return {}
 
@@ -80,14 +136,31 @@ def fetch_current_prices(symbols) -> dict:
         if response.status_code == 200:
             data = response.json()
 
-        return data
+            # Extract retrieval_datetime from response, fallback to now
+            retrieval_dt = _extract_retrieval_datetime(data)
+
+            # Inject retrieval_datetime at the top of the response
+            if isinstance(data, dict):
+                result = {"retrieval_datetime": retrieval_dt}
+                result.update(data)
+                # Remove original retrieval keys to avoid duplication
+                for key in ("retrievalDatetime", "retrieval_date", "timestamp",
+                            "retrieved_at", "lastUpdated", "last_updated"):
+                    result.pop(key, None)
+                return result
+
+            return {"retrieval_datetime": retrieval_dt}
+
+        print(f"⚠️  API returned status {response.status_code}")
+        return {"retrieval_datetime": datetime.now().strftime(RETRIEVAL_DATETIME_FORMAT)}
+
     except requests.RequestException as e:
         print(f"Error fetching prices: {e}")
-        return {}
+        return {"retrieval_datetime": datetime.now().strftime(RETRIEVAL_DATETIME_FORMAT)}
 
 
 # ══════════════════════════════════════════════════════════════
-#  NEW: Stock info retrieval for auto-creating stock records
+#  Stock info retrieval for auto-creating stock records
 # ══════════════════════════════════════════════════════════════
 
 def get_stock_info(symbol: str) -> dict | None:
@@ -146,10 +219,10 @@ if __name__ == "__main__":
     try:
         print("=======================")
         quotes = fetch_current_prices_lambda(test_symbols, max_retries=1)
-        print("Fetched quotes:", quotes)
+        print("Fetched quotes:", json.dumps(quotes, indent=2))
         print("=======================")
         prices = fetch_current_prices(test_symbols)
-        print("Get prices:", prices)
+        print("Get prices:", json.dumps(prices, indent=2))
         print("=======================")
 
         # Test new get_stock_info

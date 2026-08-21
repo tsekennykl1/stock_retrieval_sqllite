@@ -488,21 +488,34 @@ def get_watchlist():
 #  DIVIDENDS CRUD
 # ══════════════════════════════════════════════════════════════
 
-def insert_dividend(symbol, amount_per_share, quantity, payment_date):
-    """Record a dividend payment."""
+def insert_dividend(symbol, amount_per_share, quantity, payment_date, ex_dividend_date=None):
+    """Record a dividend payment with optional ex-dividend date."""
     conn = get_connection()
     cursor = conn.cursor()
     try:
         payment_date, payment_month_str = get_month_str(payment_date)
-        
+        ex_dividend_date = normalize_date(ex_dividend_date) if ex_dividend_date else None
+
         cursor.execute("""
-            INSERT INTO dividends (stock_symbol, amount_per_share, quantity, payment_date, payment_month_str)
-            VALUES (?, ?, ?, ?, ?)
-        """, (symbol.upper(), amount_per_share, quantity, payment_date, payment_month_str))
+            INSERT INTO dividends (stock_symbol, amount_per_share, quantity, payment_date, payment_month_str, ex_dividend_date)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (symbol.upper(), amount_per_share, quantity, payment_date, payment_month_str, ex_dividend_date))
         conn.commit()
-        print(f"✅ Dividend for '{symbol.upper()}' recorded!")
+        dividend_id = cursor.lastrowid
+        print(f"✅ Dividend for '{symbol.upper()}' recorded! (ID: {dividend_id})")
+        return {
+            "dividend_id": dividend_id,
+            "symbol": symbol.upper(),
+            "amount_per_share": amount_per_share,
+            "quantity": quantity,
+            "total_dividend": amount_per_share * quantity,
+            "payment_date": payment_date,
+            "payment_month_str": payment_month_str,
+            "ex_dividend_date": ex_dividend_date,
+        }
     except sqlite3.IntegrityError:
         print(f"⚠️  Stock '{symbol.upper()}' not found in stocks table!")
+        return None
     finally:
         conn.close()
 
@@ -510,31 +523,31 @@ def get_dividends(symbol=None, year_month=None):
     """Get all dividends, optionally filtered by symbol and/or month (YYYY-MM)."""
     conn = get_connection()
     cursor = conn.cursor()
-    
+
     query = """
         SELECT id, stock_symbol as symbol, amount_per_share, quantity,
-               total_dividend, payment_date, payment_month_str
+               total_dividend, payment_date, payment_month_str, ex_dividend_date
         FROM dividends
         WHERE 1=1
     """
     params = []
-    
+
     if symbol:
         query += " AND stock_symbol = ?"
         params.append(symbol.upper())
-    
+
     if year_month:
         query += " AND payment_month_str = ?"
         params.append(year_month)
-        
+
     query += " ORDER BY payment_date DESC"
-    
+
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
-    return normalize_rows([dict(row) for row in rows], ["payment_date"])
+    return normalize_rows([dict(row) for row in rows], ["payment_date", "ex_dividend_date"])
 
-def update_dividend(dividend_id, amount_per_share=None, quantity=None, payment_date=None):
+def update_dividend(dividend_id, amount_per_share=None, quantity=None, payment_date=None, ex_dividend_date=None):
     """Update an existing dividend entry."""
     conn = get_connection()
     cursor = conn.cursor()
@@ -553,11 +566,14 @@ def update_dividend(dividend_id, amount_per_share=None, quantity=None, payment_d
         payment_month_str = payment_date[:7] if len(payment_date) >= 7 else ""
         fields.append("payment_month_str = ?")
         values.append(payment_month_str)
-        
+    if ex_dividend_date is not None:
+        fields.append("ex_dividend_date = ?")
+        values.append(normalize_date(ex_dividend_date))
+
     if not fields:
         print("⚠️  No fields to update!")
         return
-        
+
     values.append(dividend_id)
     cursor.execute(f"""
         UPDATE dividends

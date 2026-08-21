@@ -79,6 +79,7 @@ def create_tables():
             amount_per_share REAL NOT NULL,
             quantity        REAL NOT NULL,
             total_dividend  REAL GENERATED ALWAYS AS (amount_per_share * quantity) VIRTUAL,
+            ex_dividend_date DATETIME,
             payment_date    DATETIME DEFAULT CURRENT_TIMESTAMP,
             payment_month_str  TEXT,
             FOREIGN KEY (stock_symbol) REFERENCES stocks(symbol) ON DELETE CASCADE
