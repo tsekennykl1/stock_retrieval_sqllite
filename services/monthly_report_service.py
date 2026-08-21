@@ -200,6 +200,7 @@ def build_monthly_report(year_month: str) -> dict:
         "expenses": float(row["expenses"]),
         "stock_pnl": float(row["stock_pnl"]),
         "dividend": float(row["dividend"]),
+        "monthly_gl": float(row["monthly_gl"]),
         "close_bal": float(row["close_bal"])
     } for row in all_pnl], key=lambda x: x['pnl_date'], reverse=True)
     
