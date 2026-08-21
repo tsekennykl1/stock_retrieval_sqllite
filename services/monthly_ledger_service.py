@@ -1,6 +1,6 @@
 import json
 from datetime import datetime
-from crud_db import get_ledger_entries
+from crud_db import get_ledger_entries, normalize_date
 
 def retrieve_monthly_ledger(start_date):
     """
@@ -13,6 +13,13 @@ def retrieve_monthly_ledger(start_date):
         # Retrieve all monthly ledger entries from the database
         #ledger = get_ledger_entries(start_date=start_date_obj.strftime('%Y-%m-01 00:00:00'))   
         ledger = get_ledger_entries(month_str=start_date)
+        #chage the date format to 'YYYY-MM-DD' for each entry and sort the ledger by date   
+        ledger = sorted([{
+            "date": normalize_date(entry['date']),
+            "type": entry['type'],
+            "amount": entry['amount'],
+            "description": entry['description']
+        } for entry in ledger], key=lambda x: x['date'])
         
         #calculate the total income and expenses for the month
         income_total = sum(entry['amount'] for entry in ledger if entry['type'] == 'I')

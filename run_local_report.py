@@ -12,5 +12,5 @@ from services.monthly_report_service import build_monthly_report
 
 if __name__ == "__main__":
     # test a specific month or default to current month
-    report = build_monthly_report()
+    report = build_monthly_report("2026-08")
     print(json.dumps(report, indent=2))

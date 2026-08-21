@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, timedelta
-from crud_db import get_dividends
+from crud_db import get_dividends,normalize_date
 
 
 def calculate_monthly_dividends(year_month, print_table=False):
@@ -25,7 +25,9 @@ def calculate_monthly_dividends(year_month, print_table=False):
         amount_per_share = float(d.get('amount_per_share', 0.0))
         quantity = float(d.get('quantity', 0.0))
         dividend_amount = float(d.get('total_dividend', 0.0))
-        payment_date = d.get('payment_date', 'N/A')
+        #retrieve payment date and format it to 'YYYY-MM-DD' if available
+
+        payment_date = d.get('payment_date')
         total_dividends += dividend_amount
         
         dividend_details.append({
@@ -33,7 +35,7 @@ def calculate_monthly_dividends(year_month, print_table=False):
             "amount_per_share": round(amount_per_share, 4),
             "quantity": round(quantity, 2),
             "divident_amount": round(dividend_amount, 2),
-            "payment_date": payment_date
+            "payment_date": normalize_date(payment_date)
         })
 
         if print_table:

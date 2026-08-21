@@ -8,6 +8,24 @@ DB_PATH = "mystocks.db"
 if "AWS_LAMBDA_FUNCTION_NAME" in os.environ:
     DB_PATH = os.environ.get("DB_PATH", "/tmp/mystocks.db")
 
+from datetime import datetime
+
+def normalize_date(date_val):
+    """Convert date value to 'YYYY-MM-DD' string, handling multiple formats."""
+    if not date_val:
+        return ""
+    s = str(date_val).strip()
+    # Already in YYYY-MM-DD format
+    if len(s) >= 10 and s[4] == '-':
+        return s[:10]
+    # Try M/D/YYYY or MM/DD/YYYY format
+    for fmt in ("%m/%d/%Y", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    # Fallback: return as-is
+    return s
 
 def get_month_str(_date=None):
     """Convert a transaction date to 'yyyy-mm' format, or use the current date if not provided."""

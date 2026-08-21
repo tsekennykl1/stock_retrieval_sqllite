@@ -2,7 +2,7 @@
 import json
 from datetime import datetime, timedelta
 
-from crud_db import get_monthly_pnl, insert_monthly_pnl, get_transactions, get_monthly_snapshots, get_all_portfolio_entries
+from crud_db import get_monthly_pnl, insert_monthly_pnl, get_transactions, get_monthly_snapshots, get_all_portfolio_entries, normalize_date
 from services.monthly_ledger_service import retrieve_monthly_ledger
 from services.monthly_dividend_service import calculate_monthly_dividends
 from services.portfolio_service import get_portfolio_holdings_json
@@ -161,8 +161,20 @@ def build_monthly_report(year_month: str) -> dict:
     if not monthly_perf:
         raise Exception(f"Monthly performance is empty. Missing snapshot for previous month of {year_month}.")
 
+    
     # ── Transactions for the month ─────────────────────────────
     transactions = get_transactions(year_month=year_month)
+
+    #format the transaction dates to 'YYYY-MM-DD' for consistency and sort the transactions by date
+    transactions = sorted([{
+        "date": normalize_date(t['transaction_date']),
+        "type": t['type'],
+        "symbol": t.get('symbol', t.get('stock_symbol')),
+        "quantity": t['quantity'],
+        "price": t['price'],
+        "total": round(t['total_amount'], 2),
+        "notes": t.get('notes', '')
+    } for t in transactions], key=lambda x: x['date'])
 
     # Ledger
     ledger = json.loads(retrieve_monthly_ledger(year_month))
@@ -192,6 +204,16 @@ def build_monthly_report(year_month: str) -> dict:
     
     # Read back computed columns
     all_pnl = get_monthly_pnl()
+    all_pnl = sorted([{
+        "pnl_date": normalize_date(row["pnl_date"]),
+        "year_month": row["year_month"],
+        "open_bal": float(row["open_bal"]),
+        "income": float(row["income"]),
+        "expenses": float(row["expenses"]),
+        "stock_pnl": float(row["stock_pnl"]),
+        "dividend": float(row["dividend"]),
+        "close_bal": float(row["close_bal"])
+    } for row in all_pnl], key=lambda x: x['pnl_date'], reverse=True)
     
     return {
         "year_month": year_month,
