@@ -67,16 +67,16 @@ def fetch_current_prices_lambda(symbols: list[str], max_retries: int = 1) -> dic
             time.sleep(sleep_s)
 
 
-
 API_URL = "https://z35lnmmzgi.execute-api.ap-east-1.amazonaws.com/prod/stock?stocks="
 
 def fetch_current_prices(symbols) -> dict:
     """Fetch current stock prices from the API."""
-    if not symbols: return {}
-    
+    if not symbols:
+        return {}
+
     try:
         response = requests.get(f"{API_URL}{','.join(symbols)}", timeout=(3, 10))
-        
+
         if response.status_code == 200:
             data = response.json()
 
@@ -84,6 +84,60 @@ def fetch_current_prices(symbols) -> dict:
     except requests.RequestException as e:
         print(f"Error fetching prices: {e}")
         return {}
+
+
+# ══════════════════════════════════════════════════════════════
+#  NEW: Stock info retrieval for auto-creating stock records
+# ══════════════════════════════════════════════════════════════
+
+def get_stock_info(symbol: str) -> dict | None:
+    """
+    Fetch stock metadata from the price API for a single symbol.
+    Used by transaction_service to auto-create stocks that aren't in the DB yet.
+
+    Tries the HTTP API first (simpler, no AWS credentials needed locally),
+    falls back to Lambda invocation.
+
+    Args:
+        symbol: Stock symbol, e.g. "0700.HK"
+
+    Returns:
+        dict like:
+        {
+            "symbol": "0700.HK",
+            "name": "TENCENT",
+            "sector": "Communication Services",
+            "currency": "HKD",
+        }
+        or None if the symbol is unrecognized or fetch fails.
+    """
+    # Ensure symbol has exchange suffix for the API
+    lookup_symbol = symbol if "." in symbol else f"{symbol}.HK"
+
+    try:
+        # Try HTTP API first
+        data = fetch_current_prices([lookup_symbol])
+
+        if not data or lookup_symbol not in data:
+            # Fallback: try Lambda
+            data = fetch_current_prices_lambda([lookup_symbol], max_retries=2)
+
+        if not data or lookup_symbol not in data:
+            print(f"⚠️  No data returned for symbol '{lookup_symbol}'")
+            return None
+
+        stock_data = data[lookup_symbol]
+
+        return {
+            "symbol": symbol.upper(),
+            "name": stock_data.get("shortName_en") or stock_data.get("shortName") or stock_data.get("name") or symbol,
+            "sector": stock_data.get("sector"),
+            "currency": stock_data.get("currency", "HKD"),
+        }
+
+    except Exception as e:
+        print(f"⚠️  Error fetching stock info for '{symbol}': {e}")
+        return None
 
 
 if __name__ == "__main__":
@@ -96,6 +150,12 @@ if __name__ == "__main__":
         print("=======================")
         prices = fetch_current_prices(test_symbols)
         print("Get prices:", prices)
+        print("=======================")
+
+        # Test new get_stock_info
+        print("--- get_stock_info ---")
+        info = get_stock_info("0700.HK")
+        print("Stock info:", info)
         print("=======================")
     except Exception as e:
         print("Error fetching quotes:", e)

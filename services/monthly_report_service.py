@@ -7,7 +7,7 @@ from services.monthly_ledger_service import retrieve_monthly_ledger
 from services.monthly_dividend_service import calculate_monthly_dividends
 from services.portfolio_service import get_portfolio_holdings_json
 from services.price_service import fetch_current_prices, fetch_current_prices_lambda 
-
+from services.transaction_service import get_monthly_transactions
 
 def get_monthly_performance(year_month,  print_table=False, current_prices=None,):
     """Calculate performance against the monthly snapshot, factoring in transactions."""
@@ -39,8 +39,7 @@ def get_monthly_performance(year_month,  print_table=False, current_prices=None,
         }
         symbols_to_fetch.add(sym)
     
-    # 2. Get Transactions for the month via create_db CRUD
-    transactions = get_transactions(year_month=year_month)
+    transactions = get_monthly_transactions(year_month=year_month)
 
     for t in transactions:
         sym = t.get('symbol', t.get('stock_symbol'))
@@ -164,17 +163,6 @@ def build_monthly_report(year_month: str) -> dict:
     
     # ── Transactions for the month ─────────────────────────────
     transactions = get_transactions(year_month=year_month)
-
-    #format the transaction dates to 'YYYY-MM-DD' for consistency and sort the transactions by date
-    transactions = sorted([{
-        "date": normalize_date(t['transaction_date']),
-        "type": t['type'],
-        "symbol": t.get('symbol', t.get('stock_symbol')),
-        "quantity": t['quantity'],
-        "price": t['price'],
-        "total": round(t['total_amount'], 2),
-        "notes": t.get('notes', '')
-    } for t in transactions], key=lambda x: x['date'])
 
     # Ledger
     ledger = json.loads(retrieve_monthly_ledger(year_month))

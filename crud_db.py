@@ -14,12 +14,14 @@ def normalize_date(date_val):
     """Convert date value to 'YYYY-MM-DD' string, handling multiple formats."""
     if not date_val:
         return ""
+    if isinstance(date_val, datetime):
+        return date_val.strftime("%Y-%m-%d")
     s = str(date_val).strip()
-    # Already in YYYY-MM-DD format
-    if len(s) >= 10 and s[4] == '-':
+    # Already in YYYY-MM-DD format (possibly with time appended)
+    if len(s) >= 10 and s[4] == '-' and s[7] == '-':
         return s[:10]
     # Try M/D/YYYY or MM/DD/YYYY format
-    for fmt in ("%m/%d/%Y", "%d/%m/%Y"):
+    for fmt in ("%m/%d/%Y", "%d/%m/%Y", "%m/%d/%Y %H:%M:%S", "%d/%m/%Y %H:%M:%S", "%m/%d/%Y %H:%M", "%d/%m/%Y %H:%M"):
         try:
             return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
         except ValueError:
@@ -27,40 +29,53 @@ def normalize_date(date_val):
     # Fallback: return as-is
     return s
 
+def normalize_rows(rows, date_fields):
+    """Normalize date fields in a list of row dicts to 'YYYY-MM-DD' format."""
+    result = []
+    for row in rows:
+        row_copy = dict(row)
+        for field in date_fields:
+            if field in row_copy and row_copy[field]:
+                row_copy[field] = normalize_date(row_copy[field])
+        result.append(row_copy)
+    return result
+
 def get_month_str(_date=None):
-    """Convert a transaction date to 'yyyy-mm' format, or use the current date if not provided."""
+    """Convert a date to ('YYYY-MM-DD', 'YYYY-MM') tuple."""
     if _date:
         if isinstance(_date, datetime):
+            return _date.strftime("%Y-%m-%d"), _date.strftime("%Y-%m")
 
+        if isinstance(_date, str):
+            # Normalize the date first
+            normalized = normalize_date(_date)
+            if normalized and len(normalized) >= 7:
+                return normalized, normalized[:7]
+            # Try other formats for month extraction
             for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y-%m", "%Y/%m/%d", "%Y/%m"):
                 try:
-                    return datetime.strptime(_date, fmt).strftime("%Y-%m-%d %H:%M:%S"), datetime.strptime(_date, fmt).strftime("%Y-%m")
+                    dt = datetime.strptime(_date, fmt)
+                    return dt.strftime("%Y-%m-%d"), dt.strftime("%Y-%m")
                 except ValueError:
                     continue
-
-        try:
-            if isinstance(_date, str):
-                # Check if _date matches one of the expected formats
-                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y-%m", "%Y/%m/%d", "%Y/%m"):
-                    try:
-                        return _date, datetime.strptime(_date, fmt).strftime("%Y-%m")
-                    except ValueError:
-                        continue
-                raise ValueError(f"Invalid date format: {_date}")
-            else:
-                raise ValueError("Invalid date format")
-        except ValueError:
-            try:
-                return _date, datetime.strptime(_date, "%Y-%m-%d").strftime("%Y-%m")
-            except ValueError:
-                raise ValueError(f"Invalid date format: {_date}")
+            # Try M/D/YYYY formats
+            for fmt in ("%m/%d/%Y", "%d/%m/%Y", "%m/%d/%Y %H:%M:%S", "%d/%m/%Y %H:%M:%S"):
+                try:
+                    dt = datetime.strptime(_date, fmt)
+                    return dt.strftime("%Y-%m-%d"), dt.strftime("%Y-%m")
+                except ValueError:
+                    continue
+            raise ValueError(f"Invalid date format: {_date}")
+        else:
+            raise ValueError("Invalid date format")
     now = datetime.now()
-    return now.strftime("%Y-%m-%d %H:%M:%S"), now.strftime("%Y-%m")
+    return now.strftime("%Y-%m-%d"), now.strftime("%Y-%m")
 
-def convertYearMonth (year_month):
-        year, month = map(int, year_month.split('-'))
-        last_day = monthrange(year, month)[1]
-        return datetime(year, month, last_day, 23, 59, 59).strftime("%Y-%m-%d %H:%M:%S") 
+def convertYearMonth(year_month):
+    """Convert 'YYYY-MM' to the last day of that month in 'YYYY-MM-DD' format."""
+    year, month = map(int, year_month.split('-'))
+    last_day = monthrange(year, month)[1]
+    return f"{year:04d}-{month:02d}-{last_day:02d}"
 
 def get_connection():
     """Establish and return a connection to the SQLite database."""
@@ -71,7 +86,6 @@ def get_connection():
 # ══════════════════════════════════════════════════════════════
 #  STOCKS CRUD
 # ══════════════════════════════════════════════════════════════
-
 def get_stock(symbol):
     """Retrieve a stock's details by its symbol."""
     conn = get_connection()
@@ -88,6 +102,24 @@ def get_stock(symbol):
     else:
         print(f"⚠️  Stock '{symbol.upper()}' not found!")
         return None
+
+def insert_stock(symbol, name, sector=None, currency="HKD"):
+    """Insert a new stock into the stocks table."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO stocks (symbol, name, sector, currency)
+            VALUES (?, ?, ?, ?)
+        """, (symbol.upper(), name, sector, currency))
+        conn.commit()
+        print(f"✅ Stock '{symbol.upper()}' added!")
+        return {"symbol": symbol.upper(), "name": name, "sector": sector, "currency": currency}
+    except sqlite3.IntegrityError:
+        print(f"⚠️  Stock '{symbol.upper()}' already exists!")
+        return None
+    finally:
+        conn.close()
 
 def update_stock(symbol, name=None, sector=None, currency=None):
     """Update an existing stock's details."""
@@ -136,7 +168,6 @@ def delete_stock(symbol):
         print(f"🗑️  Stock '{symbol.upper()}' deleted successfully!")
     conn.close()
 
-# ...existing code...
 # ══════════════════════════════════════════════════════════════
 #  PORTFOLIO CRUD
 # ══════════════════════════════════════════════════════════════
@@ -145,6 +176,7 @@ def insert_portfolio(symbol, quantity, avg_buy_price, trading_date, transaction_
     conn = get_connection()
     cursor = conn.cursor()
     try:
+        trading_date = normalize_date(trading_date) or datetime.now().strftime("%Y-%m-%d")
         cursor.execute("""
             INSERT INTO portfolio (stock_symbol, quantity, avg_buy_price, trading_date, transaction_reference_id)
             VALUES (?, ?, ?, ?, ?)
@@ -171,14 +203,10 @@ def update_portfolio(portfolio_id, quantity=None, avg_buy_price=None, trading_da
         values.append(avg_buy_price)
     if trading_date is not None:
         fields.append("trading_date = ?")
-        values.append(trading_date)
+        values.append(normalize_date(trading_date))
     if transaction_reference_id is not None:
         fields.append("transaction_reference_id = ?")
         values.append(transaction_reference_id)
-
-    # ❌ REMOVE this block — the column doesn't exist
-    # fields.append("updated_at = ?")
-    # values.append(datetime.now().isoformat())
 
     if not fields:
         return {"message": "Nothing to update"}
@@ -210,13 +238,12 @@ def get_all_portfolio_entries():
     """)
     rows = cursor.fetchall()
     conn.close()
-    return [dict(row) for row in rows]
+    return normalize_rows([dict(row) for row in rows], ["trading_date"])
 
 def get_portfolio():
     """Get full portfolio with stock details."""
     conn = get_connection()
     cursor = conn.cursor()
-
 
     cursor.execute("""
         SELECT stock_symbol, quantity, avg_buy_price, total_invested
@@ -256,21 +283,25 @@ def get_latest_portfolio():
     """)
     rows = cursor.fetchall()
     conn.close()
-
-
-
-    return [dict(row) for row in rows]
+    return normalize_rows([dict(row) for row in rows], ["latest_trading_date"])
 
 # ══════════════════════════════════════════════════════════════
 #  TRANSACTIONS CRUD
 # ══════════════════════════════════════════════════════════════
 
 def insert_transaction(symbol, type, quantity, price, notes=None, transaction_date=None):
-    """Record a BUY or SELL transaction with an optional explicit date."""
+    """
+    Record a BUY or SELL transaction.
+    
+    This is a pure CRUD operation — it only inserts the transaction record.
+    Portfolio adjustments are handled by the transaction_service layer.
+    
+    Returns:
+        dict with transaction details including the new transaction_id, or None on failure.
+    """
     conn = get_connection()
     cursor = conn.cursor()
     try:
-        # Convert transaction_date to "yyyy-mm" format for transaction_month_str
         transaction_date, transaction_month_str = get_month_str(transaction_date)
 
         cursor.execute("""
@@ -278,41 +309,26 @@ def insert_transaction(symbol, type, quantity, price, notes=None, transaction_da
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (symbol.upper(), type.upper(), quantity, price, notes, transaction_date, transaction_month_str))
 
-        # Get the latest portfolio entry for the stock
-        cursor.execute("""
-            SELECT quantity, avg_buy_price
-            FROM portfolio
-            WHERE stock_symbol = ?
-            ORDER BY trading_date DESC
-            LIMIT 1
-        """, (symbol.upper(),))
-        portfolio_entry = cursor.fetchone()
-
-        if portfolio_entry:
-            current_quantity, current_avg_price = portfolio_entry["quantity"], portfolio_entry["avg_buy_price"]
-
-            # Calculate new quantity and average price based on transaction type
-            if type.upper() == "BUY":
-                new_quantity = current_quantity + quantity
-                new_avg_price = ((current_quantity * current_avg_price) + (quantity * price)) / new_quantity
-            elif type.upper() == "SELL":
-                new_quantity = current_quantity - quantity
-                new_avg_price = current_avg_price  # Average price remains unchanged for SELL
-            else:
-                print(f"⚠️  Invalid transaction type '{type.upper()}'!")
-                return
-
-            # Insert or update the portfolio with the new values
-           
-            cursor.execute("""
-                    INSERT OR REPLACE INTO portfolio (stock_symbol, quantity, avg_buy_price, trading_date)
-                    VALUES (?, ?, ?, ?)
-                """, (symbol.upper(), new_quantity, new_avg_price, transaction_date))
- 
         conn.commit()
-        print(f"✅ {type.upper()} transaction for '{symbol.upper()}' recorded!")
+        # ┌──────────────────────────────────────────────────────────────┐
+        # │  NEW: Capture lastrowid and return a structured dict         │
+        # └──────────────────────────────────────────────────────────────┘
+        transaction_id = cursor.lastrowid
+        print(f"✅ {type.upper()} transaction for '{symbol.upper()}' recorded! (ID: {transaction_id})")
+
+        return {
+            "transaction_id": transaction_id,
+            "symbol": symbol.upper(),
+            "type": type.upper(),
+            "quantity": quantity,
+            "price": price,
+            "transaction_date": transaction_date,
+            "transaction_month_str": transaction_month_str,
+            "notes": notes,
+        }
     except sqlite3.IntegrityError:
         print(f"⚠️  Stock '{symbol.upper()}' not found in stocks table!")
+        return None
     finally:
         conn.close()
 
@@ -335,7 +351,7 @@ def update_transaction(transaction_id, type=None, quantity=None, price=None, not
         fields.append("notes = ?")
         values.append(notes)
     if transaction_date is not None:
-        transaction_date , transaction_month_str = get_month_str(transaction_date)
+        transaction_date, transaction_month_str = get_month_str(transaction_date)
         fields.append("transaction_date = ?")
         values.append(transaction_date)
         fields.append("transaction_month_str = ?")
@@ -391,7 +407,7 @@ def get_transactions(year_month, symbol=None):
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
-    return [dict(row) for row in rows]
+    return normalize_rows([dict(row) for row in rows], ["transaction_date"])
 
 # ══════════════════════════════════════════════════════════════
 #  WATCHLIST CRUD
@@ -465,7 +481,7 @@ def get_watchlist():
     """)
     rows = cursor.fetchall()
     conn.close()
-    return [dict(row) for row in rows]
+    return normalize_rows([dict(row) for row in rows], ["added_at"])
 
 
 # ══════════════════════════════════════════════════════════════
@@ -477,7 +493,7 @@ def insert_dividend(symbol, amount_per_share, quantity, payment_date):
     conn = get_connection()
     cursor = conn.cursor()
     try:
-        payment_date,payment_month_str = get_month_str(payment_date)
+        payment_date, payment_month_str = get_month_str(payment_date)
         
         cursor.execute("""
             INSERT INTO dividends (stock_symbol, amount_per_share, quantity, payment_date, payment_month_str)
@@ -516,7 +532,7 @@ def get_dividends(symbol=None, year_month=None):
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
-    return [dict(row) for row in rows]
+    return normalize_rows([dict(row) for row in rows], ["payment_date"])
 
 def update_dividend(dividend_id, amount_per_share=None, quantity=None, payment_date=None):
     """Update an existing dividend entry."""
@@ -530,10 +546,11 @@ def update_dividend(dividend_id, amount_per_share=None, quantity=None, payment_d
         fields.append("quantity = ?")
         values.append(quantity)
     if payment_date is not None:
+        payment_date = normalize_date(payment_date)
         fields.append("payment_date = ?")
         values.append(payment_date)
-        # Update payment_month_str based on the new payment_date
-        payment_month_str = datetime.strptime(payment_date, "%Y-%m-%d").strftime("%Y-%m")
+        # Update payment_month_str based on the normalized payment_date
+        payment_month_str = payment_date[:7] if len(payment_date) >= 7 else ""
         fields.append("payment_month_str = ?")
         values.append(payment_month_str)
         
@@ -578,8 +595,8 @@ def insert_monthly_snapshot(stock_symbol, start_quantity, start_price, year_mont
         if year_month:
             snapshot_date = convertYearMonth(year_month)
         else:
-            snapshot_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # Default to current date if neither is provided
-            year_month = datetime.now().strftime("%Y-%m")  # Default to current month if year_month is not provided
+            snapshot_date = datetime.now().strftime("%Y-%m-%d")
+            year_month = datetime.now().strftime("%Y-%m")
     else: 
         snapshot_date, year_month = get_month_str(snapshot_date)
     cursor.execute("""
@@ -610,14 +627,14 @@ def get_monthly_snapshots(year_month=None, stock_symbol=None, snapshot_date=None
         params.append(stock_symbol.upper())
     if snapshot_date:
         query += " AND snapshot_date >= ?"
-        params.append(snapshot_date)
+        params.append(normalize_date(snapshot_date))
         
     query += " ORDER BY year_month DESC"
     
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
-    return [dict(row) for row in rows]
+    return normalize_rows([dict(row) for row in rows], ["snapshot_date"])
 
 
 def update_monthly_snapshot(year_month, stock_symbol, start_quantity=None, start_price=None, snapshot_date=None):
@@ -633,7 +650,7 @@ def update_monthly_snapshot(year_month, stock_symbol, start_quantity=None, start
         values.append(start_price)
     if snapshot_date is not None:
         fields.append("snapshot_date = ?")
-        values.append(snapshot_date)
+        values.append(normalize_date(snapshot_date))
         
     if not fields:
         print("⚠️  No fields to update!")
@@ -671,7 +688,7 @@ def delete_monthly_snapshot(year_month, stock_symbol):
 #  MONTHLY PNL CRUD
 # ══════════════════════════════════════════════════════════════
 
-def insert_monthly_pnl( open_bal, income, expenses, stock_pnl, dividend, year_month = None,pnl_date=None):
+def insert_monthly_pnl(open_bal, income, expenses, stock_pnl, dividend, year_month=None, pnl_date=None):
     """Insert or update a monthly PnL entry."""
     
     conn = get_connection()
@@ -680,8 +697,8 @@ def insert_monthly_pnl( open_bal, income, expenses, stock_pnl, dividend, year_mo
         if year_month:
             pnl_date = convertYearMonth(year_month)
         else:
-            pnl_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # Default to current date if neither is provided
-            year_month = datetime.now().strftime("%Y-%m")  # Default to current month if year_month is not provided'
+            pnl_date = datetime.now().strftime("%Y-%m-%d")
+            year_month = datetime.now().strftime("%Y-%m")
     else:
         pnl_date, year_month = get_month_str(pnl_date)
     cursor.execute("""
@@ -694,8 +711,6 @@ def insert_monthly_pnl( open_bal, income, expenses, stock_pnl, dividend, year_mo
     conn.close()
 
 def get_monthly_pnl(year_month=None, pnl_date=None):
-    #if pnl_date:
-    #    pnl_date = datetime.strptime(pnl_date, "%d/%m/%Y %H:%M").strftime("%d/%m/%Y %H:%M")
     """Get all monthly PnL entries, optionally filtered by year_month."""
     conn = get_connection()
     cursor = conn.cursor()
@@ -712,14 +727,14 @@ def get_monthly_pnl(year_month=None, pnl_date=None):
         params.append(year_month)
     if pnl_date:
         query += " AND pnl_date >= ?"
-        params.append(pnl_date)
+        params.append(normalize_date(pnl_date))
         
     query += " ORDER BY year_month DESC"
 
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
-    return [dict(row) for row in rows]
+    return normalize_rows([dict(row) for row in rows], ["pnl_date"])
 
 def update_monthly_pnl(year_month, open_bal=None, income=None, expenses=None, stock_pnl=None, dividend=None, pnl_date=None):
     """Update an existing monthly PnL entry."""
@@ -743,7 +758,7 @@ def update_monthly_pnl(year_month, open_bal=None, income=None, expenses=None, st
         values.append(dividend)
     if pnl_date is not None:
         fields.append("pnl_date = ?")
-        values.append(pnl_date)
+        values.append(normalize_date(pnl_date))
         
     if not fields:
         print("⚠️  No fields to update!")
@@ -791,7 +806,13 @@ def insert_mortgage_monthly(principal, interest, remaining_balance, year_month=N
         if year_month is None:
             year_month = datetime.now().strftime("%Y-%m")
         elif len(year_month) > 7:
-            year_month = datetime.strptime(year_month, "%Y-%m-%d").strftime("%Y-%m")
+            year_month = normalize_date(year_month)[:7]
+
+        # Normalize period date if provided
+        if period:
+            period = normalize_date(period)
+        else:
+            period = datetime.now().strftime("%Y-%m-%d")
 
         cursor.execute("""
             INSERT OR REPLACE INTO mortgage (year_month, principal, interest, remaining_balance, period)
@@ -829,14 +850,14 @@ def get_mortgage_monthly(year_month=None, period=None):
         params.append(year_month)
     if period:
         query += " AND period >= ?"
-        params.append(period)
+        params.append(normalize_date(period))
         
     query += " ORDER BY year_month DESC"
     
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
-    return [dict(row) for row in rows]
+    return normalize_rows([dict(row) for row in rows], ["period"])
 
 def update_mortgage_monthly(year_month, principal=None, interest=None, remaining_balance=None, period=None):
     """Update an existing mortgage monthly entry."""
@@ -854,7 +875,7 @@ def update_mortgage_monthly(year_month, principal=None, interest=None, remaining
         values.append(remaining_balance)
     if period is not None:
         fields.append("period = ?")
-        values.append(period)
+        values.append(normalize_date(period))
         
     if not fields:
         print("⚠️  No fields to update!")
@@ -896,8 +917,7 @@ def insert_ledger_entry(type, category, amount, ledger_datetime=None, comment=No
     """Insert a new ledger entry."""
     conn = get_connection()
     cursor = conn.cursor()
-    # Convert datetime to "yyyy-mm" format for month_str
-    
+    # Convert datetime to "yyyy-mm-dd" and "yyyy-mm" format
     ledger_datetime, month_str = get_month_str(ledger_datetime)
 
     cursor.execute("""
@@ -923,10 +943,10 @@ def get_ledger_entries(start_date=None, end_date=None, type=None, category=None,
     
     if start_date:
         query += " AND datetime >= ?"
-        params.append(start_date)
+        params.append(normalize_date(start_date))
     if end_date:
         query += " AND datetime <= ?"
-        params.append(end_date)
+        params.append(normalize_date(end_date))
     if type:
         query += " AND type = ?"
         params.append(type)
@@ -942,7 +962,7 @@ def get_ledger_entries(start_date=None, end_date=None, type=None, category=None,
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
-    return [dict(row) for row in rows]
+    return normalize_rows([dict(row) for row in rows], ["datetime"])
 
 def update_ledger_entry(entry_id, ledger_datetime=None, type=None, category=None, amount=None, comment=None):
     """Update an existing ledger entry."""
@@ -1001,11 +1021,12 @@ def delete_ledger_entry(entry_id):
 # ══════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     # Example usage of CRUD operations for each table
+    '''
     print("=== PORTFOLIO ===")
 
     print(get_latest_portfolio())
 
-    '''
+    
     # STOCKS CRUD
     print("=== STOCKS ===")
     
@@ -1072,5 +1093,6 @@ if __name__ == "__main__":
     print(get_ledger_entries(month_str="2023-10"))
     update_ledger_entry(1, amount=1200)
     #delete_ledger_entry(1)
-    '''
+    
     #insert_transaction("0941.HK", "BUY", 1000, 81.7, "purchase")
+    '''
