@@ -3,7 +3,7 @@ import os
 from s3_db_sync import s3_db_wrapper
 from crud_db import (
     # Stocks
-    get_stock, update_stock, delete_stock,
+    get_stock, insert_stock, update_stock, delete_stock,
     # Portfolio
     insert_portfolio, update_portfolio, delete_portfolio,
     get_portfolio, get_latest_portfolio, get_all_portfolio_entries,
@@ -38,6 +38,7 @@ ROUTE_MAP = {
     ("portfolio", "insert"): {
         "handler": lambda p: insert_portfolio(
             symbol=p["symbol"],
+            stock_name=p.get("stock_name"),
             quantity=p["quantity"],
             avg_buy_price=p["avg_buy_price"],
             trading_date=p.get("trading_date"),
@@ -48,6 +49,7 @@ ROUTE_MAP = {
     ("portfolio", "update"): {
         "handler": lambda p: update_portfolio(
             portfolio_id=p["portfolio_id"],
+            stock_name=p.get("stock_name"),
             quantity=p.get("quantity"),
             avg_buy_price=p.get("avg_buy_price"),
             trading_date=p.get("trading_date"),
@@ -76,6 +78,7 @@ ROUTE_MAP = {
         # └──────────────────────────────────────────────────────────┘
         "handler": lambda p: process_transaction(
             symbol=p["symbol"],
+            stock_name=p.get("stock_name"),
             type=p["type"],
             quantity=p["quantity"],
             price=p["price"],
@@ -94,6 +97,7 @@ ROUTE_MAP = {
         "handler": lambda p: process_transaction_update(
             transaction_id=p["transaction_id"],
             symbol=p.get("symbol"),
+            stock_name=p.get("stock_name"),
             type=p.get("type"),
             quantity=p.get("quantity"),
             price=p.get("price"),
@@ -542,12 +546,13 @@ if __name__ == "__main__":
         "resource_name": "transaction",
         "action": "insert",
         "payload": {
-            "symbol": "0005.HK",
+            "symbol": "0700.HK",
+            "stock_name": "Tencent Holdings Ltd (HK)",
             "type": "BUY",
             "quantity": 400,
-            "price": 58.50,
-            "notes": "Accumulated HSBC",
-            "transaction_date": "2026-08-18"
+            "price": 458.50,
+            "notes": "Accumulated Tencent shares",
+            "transaction_date": "2026-08-22"
         }
     }
 

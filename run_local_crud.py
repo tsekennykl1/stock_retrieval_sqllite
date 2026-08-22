@@ -22,9 +22,18 @@ def test_crud():
             "action": "insert",
             "payload": {
                 "symbol": "9988.HK",
+                "stock_name": "Alibaba Group Holding Limited",
                 "quantity": 100,
                 "avg_buy_price": 82.50,
                 "trading_date": "2026-08-20"
+            }
+        },
+        {
+            "resource_name": "portfolio",
+            "action": "update",
+            "payload": {
+                "portfolio_id": 1,
+                "stock_name": "HSBC Holdings plc"
             }
         },
         # ── Transaction ───────────────────────────────────

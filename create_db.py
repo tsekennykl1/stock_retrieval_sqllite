@@ -33,6 +33,7 @@ def create_tables():
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             trading_date   DATETIME DEFAULT CURRENT_TIMESTAMP,
             stock_symbol    TEXT NOT NULL,
+            stock_name      TEXT,
             quantity        REAL NOT NULL,
             avg_buy_price   REAL NOT NULL,
             total_invested  REAL GENERATED ALWAYS AS (quantity * avg_buy_price) VIRTUAL,
@@ -47,6 +48,7 @@ def create_tables():
         CREATE TABLE IF NOT EXISTS transactions (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             stock_symbol    TEXT NOT NULL,
+            stock_name      TEXT,
             type            TEXT NOT NULL CHECK(type IN ('BUY', 'SELL')),
             quantity        REAL NOT NULL,
             price           REAL NOT NULL,

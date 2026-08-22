@@ -70,8 +70,9 @@ def import_from_csv(target_table=None):
         #'month_str',
         #'transaction_month_str',
         #'payment_month_str',
-        'total_payment'
-
+        'total_payment',
+        'start_value',
+        'remaining_balance'
     }
 
     for table in tables_to_import:

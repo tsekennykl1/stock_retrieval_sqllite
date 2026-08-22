@@ -171,52 +171,107 @@ def delete_stock(symbol):
 # ══════════════════════════════════════════════════════════════
 #  PORTFOLIO CRUD
 # ══════════════════════════════════════════════════════════════
-def insert_portfolio(symbol, quantity, avg_buy_price, trading_date, transaction_reference_id=None):
-    """Add a stock holding to the portfolio with an optional transaction reference ID."""
+def insert_portfolio(symbol, quantity, avg_buy_price, trading_date=None, transaction_reference_id=None, stock_name=None):
+    """Add a stock holding to the portfolio with an optional transaction reference ID and stock name."""
     conn = get_connection()
     cursor = conn.cursor()
     try:
         trading_date = normalize_date(trading_date) or datetime.now().strftime("%Y-%m-%d")
+
         cursor.execute("""
-            INSERT INTO portfolio (stock_symbol, quantity, avg_buy_price, trading_date, transaction_reference_id)
-            VALUES (?, ?, ?, ?, ?)
-        """, (symbol.upper(), quantity, avg_buy_price, trading_date, transaction_reference_id))
+            INSERT INTO portfolio (
+                stock_symbol,
+                stock_name,
+                quantity,
+                avg_buy_price,
+                trading_date,
+                transaction_reference_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            symbol.upper(),
+            stock_name,
+            quantity,
+            avg_buy_price,
+            trading_date,
+            transaction_reference_id
+        ))
+
         conn.commit()
-        print(f"✅ Portfolio entry for '{symbol.upper()}' added!")
+
+        portfolio_id = cursor.lastrowid
+
+        print(f"✅ Portfolio entry for '{symbol.upper()}' added! (ID: {portfolio_id})")
+
+        return {
+            "portfolio_id": portfolio_id,
+            "symbol": symbol.upper(),
+            "stock_name": stock_name,
+            "quantity": quantity,
+            "avg_buy_price": avg_buy_price,
+            "total_invested": quantity * avg_buy_price,
+            "trading_date": trading_date,
+            "transaction_reference_id": transaction_reference_id,
+        }
+
     except sqlite3.IntegrityError:
-        print(f"⚠️  Stock '{symbol.upper()}' not found in stocks table (or already exists)!")
+        print(f"⚠️  Stock '{symbol.upper()}' not found in stocks table!")
+        return None
+
     finally:
         conn.close()
 
-def update_portfolio(portfolio_id, quantity=None, avg_buy_price=None, trading_date=None, transaction_reference_id=None):
+def update_portfolio(portfolio_id,quantity=None,avg_buy_price=None,trading_date=None,transaction_reference_id=None,stock_name=None):
+    """Update an existing portfolio entry, including optional stock_name."""
     conn = get_connection()
     cursor = conn.cursor()
 
     fields = []
     values = []
 
+    if stock_name is not None:
+        fields.append("stock_name = ?")
+        values.append(stock_name)
+
     if quantity is not None:
         fields.append("quantity = ?")
         values.append(quantity)
+
     if avg_buy_price is not None:
         fields.append("avg_buy_price = ?")
         values.append(avg_buy_price)
+
     if trading_date is not None:
         fields.append("trading_date = ?")
         values.append(normalize_date(trading_date))
+
     if transaction_reference_id is not None:
         fields.append("transaction_reference_id = ?")
         values.append(transaction_reference_id)
 
     if not fields:
-        return {"message": "Nothing to update"}
+        conn.close()
+        return {
+            "message": "Nothing to update",
+            "rows_affected": 0
+        }
 
     values.append(portfolio_id)
-    cursor.execute(f"UPDATE portfolio SET {', '.join(fields)} WHERE id = ?", values)
+
+    cursor.execute(f"""
+        UPDATE portfolio
+        SET {', '.join(fields)}
+        WHERE id = ?
+    """, values)
+
+    rows_affected = cursor.rowcount
     conn.commit()
+    conn.close()
 
-    return {"message": f"Portfolio entry {portfolio_id} updated", "rows_affected": cursor.rowcount}
-
+    return {
+        "message": f"Portfolio entry {portfolio_id} updated",
+        "rows_affected": rows_affected
+    }
 
 def delete_portfolio(portfolio_id):
     """Remove a stock from the portfolio."""
@@ -232,7 +287,7 @@ def get_all_portfolio_entries():
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT id, stock_symbol, quantity, avg_buy_price, total_invested, trading_date, transaction_reference_id
+        SELECT id, stock_symbol, stock_name, quantity, avg_buy_price, total_invested, trading_date, transaction_reference_id
         FROM portfolio
         ORDER BY trading_date DESC, stock_symbol
     """)
@@ -241,61 +296,88 @@ def get_all_portfolio_entries():
     return normalize_rows([dict(row) for row in rows], ["trading_date"])
 
 def get_portfolio():
-    """Get full portfolio with stock details."""
+    """Get full latest portfolio records with stock name."""
     conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT stock_symbol, quantity, avg_buy_price, total_invested
+        SELECT
+            stock_symbol,
+            stock_name,
+            quantity,
+            avg_buy_price,
+            total_invested,
+            trading_date,
+            transaction_reference_id
         FROM portfolio
         WHERE trading_date = (
             SELECT MAX(trading_date)
             FROM portfolio AS sub
             WHERE sub.stock_symbol = portfolio.stock_symbol
         )
+        ORDER BY stock_symbol
     """)
+
     rows = cursor.fetchall()
     conn.close()
-    return [dict(row) for row in rows]
+
+    return normalize_rows([dict(row) for row in rows], ["trading_date"])
 
 
 def get_latest_portfolio():
-    """Get all portfolio symbols with the latest trading_date, stock name, average price, and quantity > 0."""
+    """Get latest portfolio record for each stock symbol with quantity > 0."""
     conn = get_connection()
     cursor = conn.cursor()
+
     cursor.execute("""
-        SELECT id,stock_symbol,
+        SELECT
+            id,
+            stock_symbol,
+            stock_name,
             trading_date AS latest_trading_date,
             quantity,
             avg_buy_price AS average_price,
-            total_invested
+            total_invested,
+            transaction_reference_id
         FROM (
-        SELECT p.*,
+            SELECT
+                p.*,
                 ROW_NUMBER() OVER (
-                PARTITION BY stock_symbol
-                ORDER BY id DESC
+                    PARTITION BY stock_symbol
+                    ORDER BY id DESC
                 ) AS rn
-        FROM portfolio p
+            FROM portfolio p
         )
         WHERE rn = 1
-        AND quantity > 0
+          AND quantity > 0
         ORDER BY latest_trading_date DESC, stock_symbol
     """)
+
     rows = cursor.fetchall()
     conn.close()
+
     return normalize_rows([dict(row) for row in rows], ["latest_trading_date"])
 
 # ══════════════════════════════════════════════════════════════
 #  TRANSACTIONS CRUD
 # ══════════════════════════════════════════════════════════════
 
-def insert_transaction(symbol, type, quantity, price, notes=None, transaction_date=None):
+def insert_transaction(symbol, type, quantity, price, notes=None, transaction_date=None, stock_name=None):
     """
     Record a BUY or SELL transaction.
-    
+
     This is a pure CRUD operation — it only inserts the transaction record.
     Portfolio adjustments are handled by the transaction_service layer.
-    
+
+    Args:
+        symbol: Stock symbol, e.g. "0005.HK"
+        type: BUY or SELL
+        quantity: Transaction quantity
+        price: Transaction price
+        notes: Optional notes
+        transaction_date: Optional transaction date
+        stock_name: Optional stock name
+
     Returns:
         dict with transaction details including the new transaction_id, or None on failure.
     """
@@ -305,76 +387,112 @@ def insert_transaction(symbol, type, quantity, price, notes=None, transaction_da
         transaction_date, transaction_month_str = get_month_str(transaction_date)
 
         cursor.execute("""
-            INSERT INTO transactions (stock_symbol, type, quantity, price, notes, transaction_date, transaction_month_str)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (symbol.upper(), type.upper(), quantity, price, notes, transaction_date, transaction_month_str))
+            INSERT INTO transactions (
+                stock_symbol,
+                stock_name,
+                type,
+                quantity,
+                price,
+                notes,
+                transaction_date,
+                transaction_month_str
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            symbol.upper(),
+            stock_name,
+            type.upper(),
+            quantity,
+            price,
+            notes,
+            transaction_date,
+            transaction_month_str
+        ))
 
         conn.commit()
-        # ┌──────────────────────────────────────────────────────────────┐
-        # │  NEW: Capture lastrowid and return a structured dict         │
-        # └──────────────────────────────────────────────────────────────┘
+
         transaction_id = cursor.lastrowid
         print(f"✅ {type.upper()} transaction for '{symbol.upper()}' recorded! (ID: {transaction_id})")
 
         return {
             "transaction_id": transaction_id,
             "symbol": symbol.upper(),
+            "stock_name": stock_name,
             "type": type.upper(),
             "quantity": quantity,
             "price": price,
+            "total_amount": quantity * price,
             "transaction_date": transaction_date,
             "transaction_month_str": transaction_month_str,
             "notes": notes,
         }
+
     except sqlite3.IntegrityError:
         print(f"⚠️  Stock '{symbol.upper()}' not found in stocks table!")
         return None
+
     finally:
         conn.close()
 
-def update_transaction(transaction_id, type=None, quantity=None, price=None, notes=None, transaction_date=None):
+def update_transaction(transaction_id, type=None, quantity=None, price=None, notes=None, transaction_date=None, stock_name=None):
     """Update an existing transaction entry."""
     conn = get_connection()
     cursor = conn.cursor()
     fields, values = [], []
-    
+
+    if stock_name is not None:
+        fields.append("stock_name = ?")
+        values.append(stock_name)
+
     if type is not None:
         fields.append("type = ?")
         values.append(type.upper())
+
     if quantity is not None:
         fields.append("quantity = ?")
         values.append(quantity)
+
     if price is not None:
         fields.append("price = ?")
         values.append(price)
+
     if notes is not None:
         fields.append("notes = ?")
         values.append(notes)
+
     if transaction_date is not None:
         transaction_date, transaction_month_str = get_month_str(transaction_date)
         fields.append("transaction_date = ?")
         values.append(transaction_date)
         fields.append("transaction_month_str = ?")
         values.append(transaction_month_str)
-        
+
     if not fields:
         print("⚠️  No fields to update!")
-        return
-        
+        return {"message": "Nothing to update", "rows_affected": 0}
+
     values.append(transaction_id)
+
     cursor.execute(f"""
         UPDATE transactions
         SET {', '.join(fields)}
         WHERE id = ?
     """, values)
-    
-    if cursor.rowcount == 0:
+
+    rows_affected = cursor.rowcount
+
+    if rows_affected == 0:
         print(f"⚠️  Transaction entry with ID '{transaction_id}' not found!")
     else:
         print(f"✅ Transaction entry with ID '{transaction_id}' updated!")
-        
+
     conn.commit()
     conn.close()
+
+    return {
+        "message": f"Transaction entry {transaction_id} updated",
+        "rows_affected": rows_affected
+    }
 
 def delete_transaction(transaction_id):
     """Delete a transaction by ID."""
@@ -392,21 +510,35 @@ def get_transactions(year_month, symbol=None):
     """Get all transactions, filtered by month (YYYY-MM) and optionally by symbol."""
     conn = get_connection()
     cursor = conn.cursor()
+
     query = """
-        SELECT t.id, t.stock_symbol as symbol, t.type, t.quantity, t.price,
-               t.total_amount, t.transaction_date, t.transaction_month_str, t.notes
+        SELECT
+            t.id,
+            t.stock_symbol AS symbol,
+            t.stock_name,
+            t.type,
+            t.quantity,
+            t.price,
+            t.total_amount,
+            t.transaction_date,
+            t.transaction_month_str,
+            t.notes
         FROM transactions t
         WHERE t.transaction_month_str = ?
     """
+
     params = [year_month]
+
     if symbol:
         query += " AND t.stock_symbol = ?"
         params.append(symbol.upper())
-        
+
     query += " ORDER BY t.transaction_date DESC"
+
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
+
     return normalize_rows([dict(row) for row in rows], ["transaction_date"])
 
 # ══════════════════════════════════════════════════════════════
