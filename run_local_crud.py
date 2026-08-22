@@ -94,6 +94,13 @@ def test_crud():
                 "year_month": "2026-08"
             }
         },
+        {
+            "resource_name": "snapshot",
+            "action": "generate",
+            "payload": {
+                "debug_mode": True
+            }
+        }
     ]
 
     for i, evt in enumerate(tests, 1):

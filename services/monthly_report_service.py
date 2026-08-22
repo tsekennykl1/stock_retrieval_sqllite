@@ -30,7 +30,7 @@ def get_monthly_performance(year_month,  print_table=False, current_prices=None,
         performance[sym] = {
             'start_qty': float(s['start_quantity']),
             'start_price': float(s['start_price']),
-            'start_value': float(s['start_quantity']) * float(s['start_price']),
+            'start_value': float(s['start_value']),
             'running_qty': float(s['start_quantity']),
             'running_cb': float(s['start_price']), # Running cost basis
             'buy_qty': 0, 'buy_value': 0.0,

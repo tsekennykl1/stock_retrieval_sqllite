@@ -23,7 +23,8 @@ from crud_db import (
     insert_ledger_entry, update_ledger_entry, delete_ledger_entry, get_ledger_entries,
 )
 from services.validation_service import validate_payload
-
+from services.transaction_service import process_transaction, process_transaction_update
+from services.monthly_snapshot_service import generate_monthly_snapshot
 
 LOCAL_DEV = os.environ.get("LOCAL_DEV") == "1"
 
@@ -69,7 +70,11 @@ ROUTE_MAP = {
 
     # ── Transactions ──────────────────────────────────────────
     ("transaction", "insert"): {
-        "handler": lambda p: insert_transaction(
+        # ┌──────────────────────────────────────────────────────────┐
+        # │  CHANGED: Now calls process_transaction (service layer)   │
+        # │  which handles BOTH the insert AND portfolio adjustment   │
+        # └──────────────────────────────────────────────────────────┘
+        "handler": lambda p: process_transaction(
             symbol=p["symbol"],
             type=p["type"],
             quantity=p["quantity"],
@@ -79,9 +84,16 @@ ROUTE_MAP = {
         ),
         "required": ["symbol", "type", "quantity", "price"],
     },
+
     ("transaction", "update"): {
-        "handler": lambda p: update_transaction(
+        # ┌──────────────────────────────────────────────────────────┐
+        # │  CHANGED: Now calls process_transaction_update            │
+        # │  which updates the transaction AND adjusts the portfolio  │
+        # │  NEW: Also accepts "symbol" to locate portfolio entry     │
+        # └──────────────────────────────────────────────────────────┘
+        "handler": lambda p: process_transaction_update(
             transaction_id=p["transaction_id"],
+            symbol=p.get("symbol"),
             type=p.get("type"),
             quantity=p.get("quantity"),
             price=p.get("price"),
@@ -90,6 +102,7 @@ ROUTE_MAP = {
         ),
         "required": ["transaction_id"],
     },
+
     ("transaction", "delete"): {
         "handler": lambda p: delete_transaction(transaction_id=p["transaction_id"]),
         "required": ["transaction_id"],
@@ -207,7 +220,11 @@ ROUTE_MAP = {
         "required": [],
     },
 
-    # ── Monthly Snapshots ─────────────────────────────────────
+        # ── Monthly Snapshots ─────────────────────────────────────
+    ("snapshot", "generate"): {
+        "handler": lambda p: generate_monthly_snapshot(debug_mode=p.get("debug_mode", False)),
+        "required": [],
+    },
     ("snapshot", "insert"): {
         "handler": lambda p: insert_monthly_snapshot(
             stock_symbol=p["stock_symbol"],
@@ -280,6 +297,15 @@ ROUTE_MAP = {
     ("stock", "get"): {
         "handler": lambda p: get_stock(symbol=p["symbol"]),
         "required": ["symbol"],
+    },
+    ("stock", "insert"): {
+        "handler": lambda p: insert_stock(
+            symbol=p["symbol"],
+            name=p["name"],
+            sector=p.get("sector"),
+            currency=p.get("currency", "HKD"),
+        ),
+        "required": ["symbol", "name"],
     },
     ("stock", "update"): {
         "handler": lambda p: update_stock(
@@ -544,8 +570,16 @@ if __name__ == "__main__":
         }
     }
 
+    test_event_5 = {
+        "resource_name": "snapshot",
+        "action": "generate",
+        "payload": {
+            "debug_mode": True
+        }
+    }
+
     # Run tests
-    for i, evt in enumerate([test_event_1, test_event_2, test_event_3, test_event_4], 1):
+    for i, evt in enumerate([test_event_1, test_event_2, test_event_3, test_event_4, test_event_5], 1):
         print(f"\n{'='*60}")
         print(f"  TEST {i}: {evt['resource_name']}/{evt['action']}")
         print(f"{'='*60}")

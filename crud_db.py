@@ -629,7 +629,7 @@ def get_monthly_snapshots(year_month=None, stock_symbol=None, snapshot_date=None
     cursor = conn.cursor()
     
     query = """
-        SELECT id, snapshot_date, year_month, stock_symbol, start_quantity, start_price
+        SELECT id, snapshot_date, year_month, stock_symbol, start_quantity, start_price, start_value
         FROM monthly_snapshots
         WHERE 1=1
     """

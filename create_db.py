@@ -95,6 +95,7 @@ def create_tables():
             stock_symbol TEXT NOT NULL,
             start_quantity REAL NOT NULL,
             start_price REAL NOT NULL,
+            start_value REAL GENERATED ALWAYS AS (start_quantity * start_price) VIRTUAL,
             FOREIGN KEY (stock_symbol) REFERENCES stocks(symbol) ON DELETE CASCADE,
             UNIQUE(year_month, stock_symbol)
         )
