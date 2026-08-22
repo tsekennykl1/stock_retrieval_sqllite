@@ -20,6 +20,7 @@ def calculate_monthly_dividends(year_month, print_table=False):
 
     for d in dividends:
         symbol = d.get('symbol', 'UNKNOWN')
+        stock_name = d.get('stock_name', '')    
         amount_per_share = float(d.get('amount_per_share', 0.0))
         quantity = float(d.get('quantity', 0.0))
         dividend_amount = float(d.get('total_dividend', 0.0))
@@ -30,6 +31,7 @@ def calculate_monthly_dividends(year_month, print_table=False):
 
         dividend_details.append({
             "symbol": symbol,
+            "stock_name": stock_name,
             "amount_per_share": round(amount_per_share, 4),
             "quantity": round(quantity, 2),
             "dividend_amount": round(dividend_amount, 2),

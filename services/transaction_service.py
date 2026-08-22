@@ -28,7 +28,7 @@ from services.price_service import get_stock_info
 # ══════════════════════════════════════════════════════════════
 #  PUBLIC API
 # ══════════════════════════════════════════════════════════════
-def process_transaction(symbol, type, quantity, price, notes=None, transaction_date=None, stock_name=None):
+def process_transaction(symbol, type, quantity, price, notes=None, transaction_date=None):
 
     """
     Full transaction workflow:
@@ -97,7 +97,6 @@ def process_transaction(symbol, type, quantity, price, notes=None, transaction_d
     # ── Step 4: Insert the transaction record ──
     transaction_result = crud_insert_transaction(
         symbol=symbol,
-        stock_name=stock_name,
         type=type,
         quantity=quantity,
         price=price,
@@ -111,7 +110,6 @@ def process_transaction(symbol, type, quantity, price, notes=None, transaction_d
     # ── Step 5: Adjust portfolio ──
     portfolio_result = _adjust_portfolio_after_transaction(
         symbol=symbol,
-        stock_name=stock_name,
         type=type,
         quantity=quantity,
         price=price,
@@ -125,7 +123,7 @@ def process_transaction(symbol, type, quantity, price, notes=None, transaction_d
     }
 
 
-def process_transaction_update(transaction_id, symbol, type=None, quantity=None, price=None, notes=None, transaction_date=None, stock_name=None):
+def process_transaction_update(transaction_id, symbol, type=None, quantity=None, price=None, notes=None, transaction_date=None):
     """
     Update a transaction and recalculate the portfolio position.
 
@@ -165,7 +163,6 @@ def process_transaction_update(transaction_id, symbol, type=None, quantity=None,
     # Step 1: Update the transaction record
     crud_update_transaction(
         transaction_id=transaction_id,
-        stock_name=stock_name,  # Stock name is not updated here
         type=type,
         quantity=quantity,
         price=price,
@@ -179,7 +176,6 @@ def process_transaction_update(transaction_id, symbol, type=None, quantity=None,
     if symbol and type and quantity is not None and price is not None:
         portfolio_result = _adjust_portfolio_after_transaction(
             symbol=symbol.upper(),
-            stock_name=stock_name,
             type=type,
             quantity=float(quantity),
             price=float(price),
@@ -224,7 +220,7 @@ def get_monthly_transactions(year_month, symbol=None):
 #  INTERNAL HELPERS
 # ══════════════════════════════════════════════════════════════
 
-def _adjust_portfolio_after_transaction(symbol, type, quantity, price, transaction_date=None, transaction_id=None,stock_name=None):
+def _adjust_portfolio_after_transaction(symbol, type, quantity, price, transaction_date=None, transaction_id=None):
     """
     Core portfolio adjustment logic:
       • Retrieves the latest portfolio row for the given symbol
@@ -278,7 +274,6 @@ def _adjust_portfolio_after_transaction(symbol, type, quantity, price, transacti
     # Insert a new portfolio row (preserves full history)
     insert_portfolio(
         symbol=symbol,
-        stock_name=stock_name,
         quantity=round(new_quantity, 4),
         avg_buy_price=round(new_avg_price, 4),
         trading_date=trading_date,
@@ -287,7 +282,6 @@ def _adjust_portfolio_after_transaction(symbol, type, quantity, price, transacti
 
     return {
         "symbol": symbol,
-        "stock_name": stock_name,
         "previous_quantity": current_quantity,
         "previous_avg_price": current_avg_price,
         "new_quantity": round(new_quantity, 4),

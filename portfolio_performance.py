@@ -84,6 +84,7 @@ def get_portfolio_performance_json(print_html=False):
 
     for item in holdings:
         symbol = item['stock_symbol']
+        stock_name = item.get('stock_name', '')
         qty = float(item['total_quantity'])
         avg_price = float(item['average_price'])
 
@@ -92,10 +93,6 @@ def get_portfolio_performance_json(print_html=False):
         # ✅ Fetch stock_data dictionary instead of just a float
         stock_data = prices.get(symbol, {})
         curr_price = stock_data.get('price', 0.0)
-        api_short_name = stock_data.get('shortName_en', '')
-        
-        # Fallback to database stock_name if API doesn't provide it
-        final_short_name = api_short_name if api_short_name else item.get('stock_name', '')
         
         curr_value = qty * curr_price
         
@@ -110,7 +107,7 @@ def get_portfolio_performance_json(print_html=False):
 
         result["holdings"].append({
             "symbol": symbol,
-            "shortName_en": final_short_name,
+            "stock_name": stock_name,
             "quantity": round(qty, 2),
             "avg_price": round(avg_price, 2),
             "current_price": round(curr_price, 2),

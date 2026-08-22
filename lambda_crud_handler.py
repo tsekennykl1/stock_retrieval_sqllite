@@ -38,7 +38,6 @@ ROUTE_MAP = {
     ("portfolio", "insert"): {
         "handler": lambda p: insert_portfolio(
             symbol=p["symbol"],
-            stock_name=p.get("stock_name"),
             quantity=p["quantity"],
             avg_buy_price=p["avg_buy_price"],
             trading_date=p.get("trading_date"),
@@ -49,7 +48,6 @@ ROUTE_MAP = {
     ("portfolio", "update"): {
         "handler": lambda p: update_portfolio(
             portfolio_id=p["portfolio_id"],
-            stock_name=p.get("stock_name"),
             quantity=p.get("quantity"),
             avg_buy_price=p.get("avg_buy_price"),
             trading_date=p.get("trading_date"),
@@ -78,7 +76,6 @@ ROUTE_MAP = {
         # └──────────────────────────────────────────────────────────┘
         "handler": lambda p: process_transaction(
             symbol=p["symbol"],
-            stock_name=p.get("stock_name"),
             type=p["type"],
             quantity=p["quantity"],
             price=p["price"],
@@ -97,7 +94,6 @@ ROUTE_MAP = {
         "handler": lambda p: process_transaction_update(
             transaction_id=p["transaction_id"],
             symbol=p.get("symbol"),
-            stock_name=p.get("stock_name"),
             type=p.get("type"),
             quantity=p.get("quantity"),
             price=p.get("price"),
@@ -547,7 +543,6 @@ if __name__ == "__main__":
         "action": "insert",
         "payload": {
             "symbol": "0700.HK",
-            "stock_name": "Tencent Holdings Ltd (HK)",
             "type": "BUY",
             "quantity": 400,
             "price": 458.50,

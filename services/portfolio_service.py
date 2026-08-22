@@ -43,6 +43,7 @@ def get_portfolio_holdings_json(print_html: bool = False) -> str:
 
     for item in holdings:
         symbol = item["stock_symbol"]
+        stock_name = item.get("stock_name", "")
         qty = float(item["quantity"])
         avg_price = float(item["average_price"])
         invested = float(item["total_invested"])
@@ -61,7 +62,7 @@ def get_portfolio_holdings_json(print_html: bool = False) -> str:
 
         result["holdings"].append({
             "symbol": symbol,
-            "shortName_en": (quotes.get(symbol, {}) or {}).get("shortName_en", item.get("stock_name", "")),
+            "stock_name": stock_name,
             "quantity": round(qty, 2),
             "avg_price": round(avg_price, 2),
             "current_price": round(curr_price, 2),
