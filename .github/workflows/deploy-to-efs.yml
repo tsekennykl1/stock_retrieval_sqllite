@@ -1,9 +1,19 @@
-name: Deploy SQLite DB to EFS via S3
+name: Deploy Lambdas to EFS
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      sync_db:
+        description: "Sync mystocks.db to EFS?"
+        type: choice
+        required: true
+        default: "no"
+        options:
+          - "no"
+          - "from_github"
+          - "from_s3"
 
 concurrency:
   group: deploy-lambdas-main
@@ -30,7 +40,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y zip
 
-      - name: Generate SQLite Database
+      # ── Only generate DB when explicitly requested ─────────────────────────
+      - name: Generate SQLite Database (from GitHub source)
+        if: github.event.inputs.sync_db == 'from_github'
         run: python create_db.py
 
       - name: Configure AWS Credentials
@@ -43,16 +55,16 @@ jobs:
       - name: Verify AWS identity
         run: aws sts get-caller-identity
 
-      # ── OPTIONAL: Upload mystocks.db to S3 (staging) ───────────────────────
-      # Enable only when you really want to overwrite the DB in S3/EFS.
-      # - name: Upload SQLite DB to S3
-      #   env:
-      #     S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
-      #   run: |
-      #     aws s3 cp mystocks.db "s3://${S3_BUCKET_NAME}/mystocks.db"
-      #     echo "✅ Database uploaded to S3 staging area"
+      # ── Upload fresh DB to S3 only when generated from GitHub ──────────────
+      - name: Upload mystocks.db to S3
+        if: github.event.inputs.sync_db == 'from_github'
+        env:
+          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
+        run: |
+          aws s3 cp mystocks.db "s3://${S3_BUCKET_NAME}/mystocks.db"
+          echo "✅ Database uploaded to S3 staging area"
 
-      - name: Sync GitHub files to S3 (optional staging)
+      - name: Sync GitHub files to S3 (excludes DB)
         env:
           S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
         run: |
@@ -62,7 +74,8 @@ jobs:
             --exclude "*.yml" \
             --exclude "*.md" \
             --exclude ".venv/*" \
-            --exclude "__pycache__/*"
+            --exclude "__pycache__/*" \
+            --exclude "mystocks.db"
           echo "✅ Files synced to S3"
 
       # ── Deploy Lambdas ─────────────────────────────────────────────────────
@@ -103,7 +116,6 @@ jobs:
             rm -rf build/*
             rm -f "${function_name}.zip"
 
-            # Copy source files/folders into build/
             for path in "$@"; do
               if [ -d "$path" ]; then
                 cp -R "$path" build/
@@ -112,7 +124,6 @@ jobs:
               fi
             done
 
-            # Install dependencies
             if [ -f "requirements_${function_name}.txt" ]; then
               pip install -r "requirements_${function_name}.txt" -t build/
             elif [ -f "requirements.txt" ]; then
@@ -127,7 +138,6 @@ jobs:
             local function_name="$1"
             shift
 
-            # args: KEY=VALUE ...
             python3 - <<PY >"/tmp/${function_name}_env.json"
           import json,sys
           vars={}
@@ -200,7 +210,6 @@ jobs:
             local memory="${3:-256}"
             shift 3
 
-            # Split args with marker: --env ... --files ...
             local mode=""
             local -a env_pairs=()
             local -a files=()
@@ -271,7 +280,7 @@ jobs:
             echo "✅ Done: ${function_name}"
           }
 
-          # ── lambda_s3_to_efs ───────────────────────────────────────────────
+          # ── lambda_s3_to_efs (the DB sync utility) ─────────────────────────
           deploy_lambda "lambda_s3_to_efs" 60 256 \
             --env \
               "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
@@ -280,35 +289,29 @@ jobs:
               "lambda_s3_to_efs.py" \
               "s3_db_sync.py"
 
-          # ── lambda_crud_handler ────────────────────────────────────────────
+          # ── lambda_crud_handler (reads/writes EFS directly) ────────────────
           deploy_lambda "lambda_crud_handler" 60 256 \
             --env \
               "DB_PATH=/mnt/efs/mystocks.db" \
-              "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
             --files \
               "lambda_crud_handler.py" \
               "crud_db.py" \
-              "services" \
-              "s3_db_sync.py"
+              "services"
 
-        
-
-          # ── lambda_consolidated_monthly_report ─────────────────────────────
+          # ── lambda_consolidated_monthly_report (reads EFS directly) ────────
           deploy_lambda "lambda_consolidated_monthly_report" 60 256 \
             --env \
               "DB_PATH=/mnt/efs/mystocks.db" \
-              "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
               "STOCK_RETRIEVAL_FUNCTION_NAME=stock_retrieval_lambda" \
               "AWS_REGION=${AWS_REGION}" \
             --files \
               "lambda_consolidated_monthly_report.py" \
               "crud_db.py" \
-              "services" \
-              "s3_db_sync.py"
+              "services"
 
-
-      # ── OPTIONAL: Trigger S3-to-EFS copy Lambda ───────────────────────────
-      - name: Trigger S3-to-EFS copy Lambda
+      # ── Only copy DB to EFS when explicitly requested ──────────────────────
+      - name: Copy mystocks.db from S3 to EFS
+        if: github.event.inputs.sync_db == 'from_github' || github.event.inputs.sync_db == 'from_s3'
         run: |
           echo "🚀 Invoking lambda_s3_to_efs to copy mystocks.db to EFS..."
 
@@ -321,7 +324,6 @@ jobs:
           echo "Lambda response:"
           cat response.json
 
-          # Fail pipeline if Lambda returned non-200
           STATUS=$(python3 -c "import json;print(json.load(open('response.json')).get('statusCode',500))")
           if [ "$STATUS" != "200" ]; then
             echo "❌ S3-to-EFS copy failed with status: $STATUS"

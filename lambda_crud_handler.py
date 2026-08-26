@@ -1,6 +1,6 @@
 import json
 import os
-from s3_db_sync import s3_db_wrapper
+# REMOVED: from s3_db_sync import s3_db_wrapper
 from crud_db import (
     # Stocks
     get_stock, insert_stock, update_stock, delete_stock,
@@ -70,10 +70,6 @@ ROUTE_MAP = {
 
     # ── Transactions ──────────────────────────────────────────
     ("transaction", "insert"): {
-        # ┌──────────────────────────────────────────────────────────┐
-        # │  CHANGED: Now calls process_transaction (service layer)   │
-        # │  which handles BOTH the insert AND portfolio adjustment   │
-        # └──────────────────────────────────────────────────────────┘
         "handler": lambda p: process_transaction(
             symbol=p["symbol"],
             type=p["type"],
@@ -86,11 +82,6 @@ ROUTE_MAP = {
     },
 
     ("transaction", "update"): {
-        # ┌──────────────────────────────────────────────────────────┐
-        # │  CHANGED: Now calls process_transaction_update            │
-        # │  which updates the transaction AND adjusts the portfolio  │
-        # │  NEW: Also accepts "symbol" to locate portfolio entry     │
-        # └──────────────────────────────────────────────────────────┘
         "handler": lambda p: process_transaction_update(
             transaction_id=p["transaction_id"],
             symbol=p.get("symbol"),
@@ -227,7 +218,7 @@ ROUTE_MAP = {
         "required": ["year_month"],
     },
 
-        # ── Monthly Snapshots ─────────────────────────────────────
+    # ── Monthly Snapshots ─────────────────────────────────────
     ("snapshot", "generate"): {
         "handler": lambda p: generate_monthly_snapshot(debug_mode=p.get("debug_mode", False)),
         "required": [],
@@ -367,30 +358,22 @@ def extract_payload(event: dict) -> dict:
       - API Gateway REST (body is JSON string)
       - API Gateway HTTP API v2
     """
-    # If body exists (API Gateway), parse it
     body = event.get("body")
     if body:
         try:
             return json.loads(body) if isinstance(body, str) else body
         except (json.JSONDecodeError, TypeError):
             return {}
-
-    # Otherwise assume direct invocation — event itself holds the fields
     return event
 
 
 def extract_route(event: dict, parsed_body: dict = None) -> tuple:
     """
     Extract (resource, action) from path parameters or from the payload.
-    Supports:
-      - API Gateway path: /crud/{resource}/{action}
-      - JSON body keys: {"resource_name": "...", "action": "..."}
-      - Direct event keys: {"resource_name": "...", "action": "..."}
     """
     if parsed_body is None:
         parsed_body = {}
 
-    # 1. Try path parameters first (API Gateway proxy integration)
     path_params = event.get("pathParameters") or {}
     resource = path_params.get("resource")
     action = path_params.get("action")
@@ -398,14 +381,12 @@ def extract_route(event: dict, parsed_body: dict = None) -> tuple:
     if resource and action:
         return resource.lower(), action.lower()
 
-    # 2. Check parsed body (API Gateway POST with JSON body)
     resource = parsed_body.get("resource_name") or parsed_body.get("resource")
     action = parsed_body.get("action")
 
     if resource and action:
         return resource.lower(), action.lower()
 
-    # 3. Fallback: check top-level event (for Lambda console / direct invoke)
     resource = event.get("resource_name") or event.get("resource")
     action = event.get("action")
 
@@ -419,13 +400,12 @@ def extract_route(event: dict, parsed_body: dict = None) -> tuple:
 # ══════════════════════════════════════════════════════════════
 
 def lambda_handler(event, context):
-    
 
     # ─── Handle CORS preflight ─────────────────────────────
     http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
     if not http_method:
         http_method = event.get("httpMethod", "")
-    
+
     if http_method.upper() == "OPTIONS":
         return {
             "statusCode": 200,
@@ -436,19 +416,13 @@ def lambda_handler(event, context):
             },
             "body": "",
         }
-    # ───────────────────────────────────────────────────────
 
     try:
-        # Parse body for API Gateway events
         parsed_body = extract_payload(event)
-
-        # Extract route from path params OR parsed body
         resource, action = extract_route(event, parsed_body)
 
-        # Extract the nested payload (or use the body minus routing keys)
         payload = parsed_body.get("payload") if isinstance(parsed_body.get("payload"), dict) else {}
         if not payload:
-            # Fallback: use parsed body but strip routing keys
             payload = {k: v for k, v in parsed_body.items() if k not in ("resource_name", "resource", "action", "operation", "payload")}
 
         if not resource or not action:
@@ -465,7 +439,6 @@ def lambda_handler(event, context):
                 "hint": "Valid actions are typically: insert, update, delete, get"
             })
 
-        # Validate required fields
         missing = [f for f in route["required"] if f not in payload or payload[f] is None]
         if missing:
             return _response(400, {
@@ -473,19 +446,17 @@ def lambda_handler(event, context):
                 "missing_fields": missing,
             })
 
-        # Validation service
         errors = validate_payload(resource, payload)
         if errors:
             return _response(400, {"error": "Validation failed", "details": errors})
 
-        # Execute within S3 sync wrapper (or locally)
-        if LOCAL_DEV:
-            result = route["handler"](payload)
-        else:
-            with s3_db_wrapper():
-                result = route["handler"](payload)
+        # ═══════════════════════════════════════════════════════
+        # CHANGED: Always call handler directly.
+        # DB is on EFS at /mnt/efs/mystocks.db (set via DB_PATH env var).
+        # No S3 download/upload needed.
+        # ═══════════════════════════════════════════════════════
+        result = route["handler"](payload)
 
-        # Format result for response
         response_body = {
             "message": f"{action.capitalize()} on '{resource}' completed successfully.",
             "resource": resource,
@@ -530,61 +501,6 @@ def _response(status_code: int, body: dict) -> dict:
 if __name__ == "__main__":
     os.environ["LOCAL_DEV"] = "1"
     print("🚀 Running CRUD Lambda locally...\n")
-    '''
-    # Example 1: Insert a ledger entry
-    test_event_1 = {
-        "resource_name": "ledger",
-        "action": "insert",
-        "payload": {
-            "type": "E",
-            "category": "Groceries",
-            "amount": 350.00,
-            "ledger_datetime": "2026-08-15",
-            "comment": "Weekly groceries"
-        }
-    }
-
-    # Example 2: Insert a transaction (BUY)
-    test_event_2 = {
-        "resource_name": "transaction",
-        "action": "insert",
-        "payload": {
-            "symbol": "0700.HK",
-            "type": "BUY",
-            "quantity": 400,
-            "price": 458.50,
-            "notes": "Accumulated Tencent shares",
-            "transaction_date": "2026-08-22"
-        }
-    }
-
-    # Example 3: Get all PnL
-    test_event_3 = {
-        "resource_name": "monthly_pnl",
-        "action": "get",
-        "payload": {}
-    }
-
-    # Example 4: Insert dividend
-    test_event_4 = {
-        "resource_name": "dividend",
-        "action": "insert",
-        "payload": {
-            "symbol": "0005.HK",
-            "amount_per_share": 0.30,
-            "quantity": 400,
-            "payment_date": "2026-08-20"
-        }
-    }
-
-    test_event_5 = {
-        "resource_name": "snapshot",
-        "action": "generate",
-        "payload": {
-            "debug_mode": True
-        }
-    }
-    '''
 
     test_event_1 = {
         "resource_name": "dividend",
@@ -596,8 +512,7 @@ if __name__ == "__main__":
         "action": "get_all",
         "payload": {'year_month': '2026-08'}
     }
-    # Run tests
-    #for i, evt in enumerate([test_event_1, test_event_2, test_event_3, test_event_4, test_event_5], 1):
+
     for i, evt in enumerate([test_event_1, test_event_2], 1):
         print(f"\n{'='*60}")
         print(f"  TEST {i}: {evt['resource_name']}/{evt['action']}")

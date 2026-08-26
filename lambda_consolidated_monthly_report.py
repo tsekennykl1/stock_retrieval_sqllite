@@ -3,11 +3,7 @@ import os
 import calendar
 from datetime import datetime, timezone
 from crud_db import get_monthly_pnl
-
-from s3_db_sync import s3_db_wrapper
 from services.monthly_report_service import build_monthly_report
-
-LOCAL_DEV = os.environ.get("LOCAL_DEV") == "1"
 
 
 def lambda_handler(event, context):
@@ -19,15 +15,7 @@ def lambda_handler(event, context):
         year_month = datetime.now(timezone.utc).strftime("%Y-%m")
 
     try:
-        # Only use the S3<->EFS wrapper in Lambda; allow local dev to run without it.
-        if LOCAL_DEV:
-            report = build_monthly_report(year_month=year_month)
-        else:
-            with s3_db_wrapper():
-                report = build_monthly_report(year_month=year_month)
-
- 
-
+        report = build_monthly_report(year_month=year_month)
 
         return {
             "statusCode": 200,
