@@ -1,10 +1,9 @@
-# services/monthly_report_service.py
 import json
 from datetime import datetime, timedelta
 
 from crud_db import get_monthly_pnl, insert_monthly_pnl, get_transactions, get_monthly_snapshots, get_all_portfolio_entries, normalize_date
 from services.monthly_ledger_service import retrieve_monthly_ledger
-from services.monthly_dividend_service import calculate_monthly_dividends
+from services.monthly_dividend_service import calculate_monthly_dividends, calculate_all_dividends_from
 from services.portfolio_service import get_portfolio_holdings_json
 from services.price_service import fetch_current_prices, fetch_current_prices_lambda 
 from services.transaction_service import get_monthly_transactions
@@ -94,7 +93,6 @@ def get_monthly_performance(year_month,  print_table=False, current_prices=None,
         "performance": []
     }
 
-    # ✅ Add missing for-loop and accurately output the adjusted data
     for sym, data in performance.items():
         # Adjusted end-of-month quantity
         end_qty = max(0, data['running_qty'])
@@ -132,8 +130,6 @@ def get_monthly_performance(year_month,  print_table=False, current_prices=None,
         print(f"{'TOTALS':<24} | {total_start_val:<10.2f} | {'':<11} | {'':<12} | {'':<10} | {total_curr_val:<10.2f} | {total_realized:<12.2f} | {total_net_diff:<12.2f}")
         print("="*120 + "\n")
     
-    # Prepare JSON result
-  
     result["totals"] = {
         "total_start_value": total_start_val,
         "total_current_value": total_curr_val,
@@ -160,7 +156,6 @@ def build_monthly_report(year_month: str) -> dict:
     if not monthly_perf:
         raise Exception(f"Monthly performance is empty. Missing snapshot for previous month of {year_month}.")
 
-    
     # ── Transactions for the month ─────────────────────────────
     transactions = get_transactions(year_month=year_month)
 
@@ -170,9 +165,12 @@ def build_monthly_report(year_month: str) -> dict:
     income = float(ledger.get("Income_total", -0.01) or -0.01)
     expenses = float(ledger.get("Expenses_total", -0.01) or -0.01)
     
-    # Dividends total
-    dividend_data = calculate_monthly_dividends(year_month)
-    dividends_total = float(dividend_data.get("total_dividends", 0.0))
+    # Dividends — use calculate_all_dividends_from to get both current month and all future receivable
+    dividend_data = calculate_all_dividends_from(year_month)
+    # total_dividend: only the specified year_month's dividends (for PnL calculation)
+    dividends_total = float(dividend_data.get("total_dividend", 0.0))
+    # total_all_dividend: current month + all future receivable dividends (for display/reference)
+    dividends_all_total = float(dividend_data.get("total_all_dividend", 0.0))
     
     # Open balance from previous month close
     last_month = (datetime.strptime(year_month, "%Y-%m") - timedelta(days=1)).strftime("%Y-%m")
@@ -180,7 +178,7 @@ def build_monthly_report(year_month: str) -> dict:
     open_bal = float(last_month_rows[0]["close_bal"]) if last_month_rows else 0.0
     stock_pnl = float(monthly_perf["totals"]["total_net_diff"])
      
-    # Insert/update current month PnL
+    # Insert/update current month PnL (uses only current month's dividend total)
     insert_monthly_pnl(
         year_month=year_month,
         open_bal=open_bal,
@@ -208,14 +206,14 @@ def build_monthly_report(year_month: str) -> dict:
         "year_month": year_month,
         "previous_month": last_month,
         "portfolio_performance": holdings,
-        "market_data": market_data,              # ← NEW: current stock prices
+        "market_data": market_data,
         "monthly_performance": monthly_perf,
-        "transactions": transactions,            # ← NEW: month's transactions
+        "transactions": transactions,
         "monthly_ledger": ledger,
         "dividends": dividend_data,
         "all_monthly_pnl": all_pnl,
     }
+
 if __name__ == "__main__":
     current_month = datetime.now().strftime('%Y-%m')
-    #print(json.dumps(build_monthly_report(current_month)["all_monthly_pnl"][0]))
     print(json.dumps(build_monthly_report(current_month), indent=4))

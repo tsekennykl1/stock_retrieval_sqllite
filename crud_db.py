@@ -668,6 +668,40 @@ def get_dividends(symbol=None, year_month=None):
     conn.close()
     return normalize_rows([dict(row) for row in rows], ["payment_date", "ex_dividend_date"])
 
+def get_all_dividends_from(year_month, symbol=None):
+    """Get all dividends with payment_month_str >= year_month (from that month onwards).
+    
+    Args:
+        year_month: Starting month in 'YYYY-MM' format (inclusive).
+        symbol: Optional stock symbol filter.
+    
+    Returns:
+        List of dividend dicts with normalized date fields.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    query = """
+        SELECT d.id, d.stock_symbol AS symbol, s.name AS stock_name,
+               d.amount_per_share, d.quantity,
+               d.total_dividend, d.payment_date, d.payment_month_str, d.ex_dividend_date
+        FROM dividends d
+        LEFT JOIN stocks s ON d.stock_symbol = s.symbol
+        WHERE d.payment_month_str >= ?
+    """
+    params = [year_month]
+
+    if symbol:
+        query += " AND d.stock_symbol = ?"
+        params.append(symbol.upper())
+
+    query += " ORDER BY d.payment_date ASC"
+
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return normalize_rows([dict(row) for row in rows], ["payment_date", "ex_dividend_date"])
+
 def update_dividend(dividend_id, amount_per_share=None, quantity=None, payment_date=None, ex_dividend_date=None):
     """Update an existing dividend entry."""
     conn = get_connection()

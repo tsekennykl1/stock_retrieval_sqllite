@@ -4,11 +4,13 @@ import os
 import time
 import random
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
+
+TIMEZONE_GMT8 = timezone(timedelta(hours=8))
 
 STOCK_RETRIEVAL_FUNCTION_NAME = os.environ.get("STOCK_RETRIEVAL_FUNCTION_NAME", "stock-price-retrieval")
 AWS_REGION = os.environ.get("AWS_REGION")  # let Lambda default if not set
@@ -30,15 +32,14 @@ RETRYABLE_CODES = {
 
 RETRIEVAL_DATETIME_FORMAT = "%Y-%m-%d %H:%M"
 
-
 def _extract_retrieval_datetime(data: dict) -> str:
     """
-    Extract retrieval_datetime from the API/Lambda response.
+    Extract retrieval_datetime from the API/Lambda response and convert to GMT+8.
     Looks for common field names that might contain the retrieval timestamp.
-    If not found, returns current datetime formatted as 'YYYY-MM-DD HH:MM'.
+    If not found, returns current datetime (GMT+8) formatted as 'YYYY-MM-DD HH:MM'.
     """
     if not isinstance(data, dict):
-        return datetime.now().strftime(RETRIEVAL_DATETIME_FORMAT)
+        return datetime.now(TIMEZONE_GMT8).strftime(RETRIEVAL_DATETIME_FORMAT)
 
     # Check top-level fields that might hold retrieval datetime
     for key in ("retrieval_datetime", "retrievalDatetime", "retrieval_date",
@@ -48,20 +49,30 @@ def _extract_retrieval_datetime(data: dict) -> str:
             # Try to parse and re-format to ensure consistent output
             for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S",
                         "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S.%f",
-                        "%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%S%z"):
+                        "%Y-%m-%dT%H:%M:%S.%fZ"):
                 try:
                     parsed = datetime.strptime(raw_val, fmt)
-                    return parsed.strftime(RETRIEVAL_DATETIME_FORMAT)
+                    # If naive (no timezone info), assume it's already UTC
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=timezone.utc)
+                    # Convert to GMT+8
+                    parsed_gmt8 = parsed.astimezone(TIMEZONE_GMT8)
+                    return parsed_gmt8.strftime(RETRIEVAL_DATETIME_FORMAT)
                 except ValueError:
                     continue
+            # Try timezone-aware format separately
+            try:
+                parsed = datetime.strptime(raw_val, "%Y-%m-%dT%H:%M:%S%z")
+                parsed_gmt8 = parsed.astimezone(TIMEZONE_GMT8)
+                return parsed_gmt8.strftime(RETRIEVAL_DATETIME_FORMAT)
+            except ValueError:
+                pass
             # If parsing fails but value looks reasonable, return truncated
             if len(raw_val) >= 16:
                 return raw_val[:16]
             return raw_val
-
-    # Fallback: use current datetime
-    return datetime.now().strftime(RETRIEVAL_DATETIME_FORMAT)
-
+    # Fallback: use current datetime in GMT+8
+    return datetime.now(TIMEZONE_GMT8).strftime(RETRIEVAL_DATETIME_FORMAT)
 
 def fetch_current_prices_lambda(symbols: list[str], max_retries: int = 1) -> dict:
     """
