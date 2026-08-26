@@ -12,7 +12,7 @@ from crud_db import (
     # Watchlist
     insert_watchlist, update_watchlist, delete_watchlist, get_watchlist,
     # Dividends
-    insert_dividend, update_dividend, delete_dividend, get_dividends,
+    insert_dividend, update_dividend, delete_dividend, get_dividends, get_all_dividends_from,
     # Monthly Snapshots
     insert_monthly_snapshot, update_monthly_snapshot, delete_monthly_snapshot, get_monthly_snapshots,
     # Monthly PnL
@@ -217,7 +217,14 @@ ROUTE_MAP = {
             symbol=p.get("symbol"),
             year_month=p.get("year_month"),
         ),
-        "required": [],
+        "required": ["year_month"],
+    },
+    ("dividend", "get_all"): {
+        "handler": lambda p: get_all_dividends_from(
+            symbol=p.get("symbol"),
+            year_month=p.get("year_month"),
+        ),
+        "required": ["year_month"],
     },
 
         # ── Monthly Snapshots ─────────────────────────────────────
@@ -523,7 +530,7 @@ def _response(status_code: int, body: dict) -> dict:
 if __name__ == "__main__":
     os.environ["LOCAL_DEV"] = "1"
     print("🚀 Running CRUD Lambda locally...\n")
-
+    '''
     # Example 1: Insert a ledger entry
     test_event_1 = {
         "resource_name": "ledger",
@@ -577,9 +584,21 @@ if __name__ == "__main__":
             "debug_mode": True
         }
     }
+    '''
 
+    test_event_1 = {
+        "resource_name": "dividend",
+        "action": "get",
+        "payload": {'year_month': '2026-08'}
+    }
+    test_event_2 = {
+        "resource_name": "dividend",
+        "action": "get_all",
+        "payload": {'year_month': '2026-08'}
+    }
     # Run tests
-    for i, evt in enumerate([test_event_1, test_event_2, test_event_3, test_event_4, test_event_5], 1):
+    #for i, evt in enumerate([test_event_1, test_event_2, test_event_3, test_event_4, test_event_5], 1):
+    for i, evt in enumerate([test_event_1, test_event_2], 1):
         print(f"\n{'='*60}")
         print(f"  TEST {i}: {evt['resource_name']}/{evt['action']}")
         print(f"{'='*60}")
