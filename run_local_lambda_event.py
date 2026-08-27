@@ -2,7 +2,7 @@ import json
 import os
 
 os.environ.setdefault("AWS_REGION", "ap-east-1")
-os.environ.setdefault("STOCK_RETRIEVAL_FUNCTION_NAME", "getStockData")
+os.environ.setdefault("STOCK_RETRIEVAL_FUNCTION_NAME", "yfinance-lambda")
 
 from lambda_consolidated_monthly_report import lambda_handler
 

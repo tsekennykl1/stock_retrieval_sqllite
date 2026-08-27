@@ -12,7 +12,7 @@ from botocore.exceptions import ClientError
 
 TIMEZONE_GMT8 = timezone(timedelta(hours=8))
 
-STOCK_RETRIEVAL_FUNCTION_NAME = os.environ.get("STOCK_RETRIEVAL_FUNCTION_NAME", "getStockData")
+STOCK_RETRIEVAL_FUNCTION_NAME = os.environ.get("STOCK_RETRIEVAL_FUNCTION_NAME", "yfinance-lambda")
 AWS_REGION = os.environ.get("AWS_REGION")  # let Lambda default if not set
 
 _lambda_client = boto3.client(
@@ -76,7 +76,7 @@ def _extract_retrieval_datetime(data: dict) -> str:
 
 def fetch_current_prices_lambda(symbols: list[str], max_retries: int = 1) -> dict:
     """
-    Invokes stock_retrieval_lambda and returns a dict keyed by symbol.
+    Invokes yfinance-lambda and returns a dict keyed by symbol.
     Includes 'retrieval_datetime' (YYYY-MM-DD HH:MM) at the top level.
     Expected return shape per symbol: dict with fields like price, shortName_en, etc.
     """
