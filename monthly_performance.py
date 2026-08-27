@@ -16,7 +16,9 @@ from services.monthly_report_service import get_monthly_ledger
 
 #### filepath: /Users/kwokleungtse/Documents/AWS/stock_retrieval_sqllite/monthly_performance.py
 # ...existing code...
-API_URL = "https://z35lnmmzgi.execute-api.ap-east-1.amazonaws.com/prod/stock?stocks="
+#API_URL = "https://z35lnmmzgi.execute-api.ap-east-1.amazonaws.com/prod/stock?stocks="
+API_URL = "https://z35lnmmzgi.execute-api.ap-east-1.amazonaws.com/prod/stock_retrieval_lambda?stocks"
+
 
 def fetch_current_prices(symbols):
     """Fetch current stock prices from the API."""

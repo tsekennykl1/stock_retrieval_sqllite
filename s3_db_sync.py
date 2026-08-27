@@ -5,7 +5,7 @@ S3_KEY = "mystocks.db"
 
 def sync_s3_to_efs():
     """Download mystocks.db from S3 to EFS mount."""
-    bucket = os.environ.get("S3_BUCKET_NAME")
+    bucket = os.environ.get("S3_BUCKET_NAME","s3general-148535751717-ap-east-1-an"))
     efs_path = os.environ.get("EFS_PATH", "/mnt/efs")
 
     if not bucket:
