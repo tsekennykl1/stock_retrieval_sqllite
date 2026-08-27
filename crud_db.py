@@ -9,7 +9,6 @@ if "AWS_LAMBDA_FUNCTION_NAME" in os.environ:
     base_path = os.environ.get("DB_PATH", "/mnt/efs")
     DB_PATH = os.path.join(base_path, "mystocks.db") 
 
-print(f"Files in {db_path}: {os.listdir(db_path)}")  # Log what's there
 
 
 
