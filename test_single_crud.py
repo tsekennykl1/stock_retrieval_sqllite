@@ -4,7 +4,7 @@ import json
 # ── Must set BEFORE importing the handler ──
 os.environ["LOCAL_DEV"] = "1"
 os.environ.setdefault("AWS_REGION", "ap-east-1")
-os.environ.setdefault("STOCK_RETRIEVAL_FUNCTION_NAME", "stock_retrieval_lambda")
+os.environ.setdefault("STOCK_RETRIEVAL_FUNCTION_NAME", "getStockData")
 
 from lambda_crud_handler import lambda_handler
 

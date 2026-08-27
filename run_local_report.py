@@ -6,7 +6,7 @@ import json
 
 # Required for boto3 invoke:
 os.environ.setdefault("AWS_REGION", "ap-east-1")
-os.environ.setdefault("STOCK_RETRIEVAL_FUNCTION_NAME", "stock_retrieval_lambda")
+os.environ.setdefault("STOCK_RETRIEVAL_FUNCTION_NAME", "getStockData")
 
 from services.monthly_report_service import build_monthly_report
 

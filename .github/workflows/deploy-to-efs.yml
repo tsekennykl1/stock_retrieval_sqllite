@@ -302,7 +302,7 @@ jobs:
           deploy_lambda "lambda_consolidated_monthly_report" 60 256 \
             --env \
               "DB_PATH=/mnt/efs/mystocks.db" \
-              "STOCK_RETRIEVAL_FUNCTION_NAME=stock_retrieval_lambda" \
+              "STOCK_RETRIEVAL_FUNCTION_NAME=getStockData" \
               "AWS_REGION=${AWS_REGION}" \
             --files \
               "lambda_consolidated_monthly_report.py" \

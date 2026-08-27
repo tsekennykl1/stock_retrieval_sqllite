@@ -12,7 +12,7 @@ from botocore.exceptions import ClientError
 
 TIMEZONE_GMT8 = timezone(timedelta(hours=8))
 
-STOCK_RETRIEVAL_FUNCTION_NAME = os.environ.get("STOCK_RETRIEVAL_FUNCTION_NAME", "stock_retrieval_lambda")
+STOCK_RETRIEVAL_FUNCTION_NAME = os.environ.get("STOCK_RETRIEVAL_FUNCTION_NAME", "getStockData")
 AWS_REGION = os.environ.get("AWS_REGION")  # let Lambda default if not set
 
 _lambda_client = boto3.client(
