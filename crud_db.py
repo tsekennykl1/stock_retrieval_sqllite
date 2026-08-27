@@ -6,7 +6,12 @@ import os
 # Dynamically set DB path (Defaults to local mystocks.db, overwritten in Lambda)
 DB_PATH = "mystocks.db"
 if "AWS_LAMBDA_FUNCTION_NAME" in os.environ:
-    DB_PATH = os.environ.get("DB_PATH", "/tmp/mystocks.db")
+    base_path = os.environ.get("DB_PATH", "/mnt/efs")
+    DB_PATH = os.path.join(base_path, "mystocks.db") 
+
+print(f"Files in {db_path}: {os.listdir(db_path)}")  # Log what's there
+
+
 
 from datetime import datetime
 
