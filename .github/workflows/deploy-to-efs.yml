@@ -309,25 +309,3 @@ jobs:
               "crud_db.py" \
               "services"
 
-      # ── Only copy DB to EFS when explicitly requested ──────────────────────
-      - name: Copy mystocks.db from S3 to EFS
-        if: github.event.inputs.sync_db == 'from_github' || github.event.inputs.sync_db == 'from_s3'
-        run: |
-          echo "🚀 Invoking lambda_s3_to_efs to copy mystocks.db to EFS..."
-
-          aws lambda invoke \
-            --function-name lambda_s3_to_efs \
-            --payload '{}' \
-            --cli-binary-format raw-in-base64-out \
-            response.json
-
-          echo "Lambda response:"
-          cat response.json
-
-          STATUS=$(python3 -c "import json;print(json.load(open('response.json')).get('statusCode',500))")
-          if [ "$STATUS" != "200" ]; then
-            echo "❌ S3-to-EFS copy failed with status: $STATUS"
-            exit 1
-          fi
-
-          echo "✅ mystocks.db successfully copied to EFS!"

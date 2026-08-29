@@ -1197,7 +1197,10 @@ def delete_ledger_entry(entry_id):
 if __name__ == "__main__":
     import sys
 
+    print(get_monthly_snapshots('2026-07'))
 
+
+    '''
     print("=" * 60)
     print("  CRUD_DB.PY — FULL CRUD TEST SUITE")
     print("=" * 60)
@@ -2124,3 +2127,4 @@ if __name__ == "__main__":
         print(f"\n  🟢 ALL TESTS PASSED! ✅")
         print()
         sys.exit(0)
+    '''
