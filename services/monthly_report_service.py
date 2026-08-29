@@ -9,7 +9,11 @@ from services.price_service import fetch_current_prices, fetch_current_prices_la
 from services.transaction_service import get_monthly_transactions
 
 def get_monthly_performance(year_month,  print_table=False, current_prices=None,):
-    """Calculate performance against the monthly snapshot, factoring in transactions."""
+    """Calculate performance against the monthly snapshot, factoring in transactions.
+    
+    Realized G/L is computed using LIFO (Last In, First Out):
+    each sell is matched against the most-recently-acquired cost lot first.
+    """
     
     # 1. Get Snapshot via create_db CRUD
     # Calculate the last month in 'YYYY-MM' format
@@ -31,7 +35,9 @@ def get_monthly_performance(year_month,  print_table=False, current_prices=None,
             'start_price': float(s['start_price']),
             'start_value': float(s['start_value']),
             'running_qty': float(s['start_quantity']),
-            'running_cb': float(s['start_price']), # Running cost basis
+            # ── LIFO: cost lot stack [(qty, unit_price), ...] ──
+            # The snapshot's opening position is the bottom (oldest) lot
+            'cost_lots': [(float(s['start_quantity']), float(s['start_price']))],
             'buy_qty': 0, 'buy_value': 0.0,
             'sell_qty': 0, 'sell_value': 0.0,
             'realized_gl': 0.0
@@ -48,7 +54,8 @@ def get_monthly_performance(year_month,  print_table=False, current_prices=None,
             # Stock bought this month (not in snapshot)
             performance[sym] = {
                 'start_qty': 0, 'start_price': 0.0, 'start_value': 0.0,
-                'running_qty': 0, 'running_cb': 0.0,
+                'running_qty': 0,
+                'cost_lots': [],
                 'buy_qty': 0, 'buy_value': 0.0, 'sell_qty': 0, 'sell_value': 0.0,
                 'realized_gl': 0.0
             }
@@ -59,20 +66,34 @@ def get_monthly_performance(year_month,  print_table=False, current_prices=None,
         if t['type'].upper() == 'BUY':
             performance[sym]['buy_qty'] += qty
             performance[sym]['buy_value'] += (qty * price)
-            
-            # Recalculate average cost basis
-            total_cost = (performance[sym]['running_qty'] * performance[sym]['running_cb']) + (qty * price)
             performance[sym]['running_qty'] += qty
-            if performance[sym]['running_qty'] > 0:
-                performance[sym]['running_cb'] = total_cost / performance[sym]['running_qty']
+            # ── LIFO: push new lot onto the top of the stack ──
+            performance[sym]['cost_lots'].append((qty, price))
                 
         elif t['type'].upper() == 'SELL':
             performance[sym]['sell_qty'] += qty
             performance[sym]['sell_value'] += (qty * price)
-            
-            # Realized G/L based on the running cost basis at the time of sale
-            performance[sym]['realized_gl'] += round((price - performance[sym]['running_cb']) * qty, 2)
             performance[sym]['running_qty'] -= qty
+            
+            # ── LIFO: consume lots from the top (most recent) first ──
+            remaining = qty
+            realized = 0.0
+
+            while remaining > 0 and performance[sym]['cost_lots']:
+                lot_qty, lot_price = performance[sym]['cost_lots'][-1]
+                sell_from_lot = min(remaining, lot_qty)
+
+                realized  += (price - lot_price) * sell_from_lot
+                remaining -= sell_from_lot
+
+                if sell_from_lot >= lot_qty:
+                    # Entire lot consumed — pop it off the stack
+                    performance[sym]['cost_lots'].pop()
+                else:
+                    # Partial lot consumed — shrink it in place
+                    performance[sym]['cost_lots'][-1] = (lot_qty - sell_from_lot, lot_price)
+
+            performance[sym]['realized_gl'] += round(realized, 2)
 
     # 3. Get Current Prices
     if current_prices is None:

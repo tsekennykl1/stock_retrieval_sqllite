@@ -289,3 +289,6 @@ def _adjust_portfolio_after_transaction(symbol, type, quantity, price, transacti
         "trading_date": trading_date,
         "transaction_reference_id": transaction_id,
     }
+
+if __name__ == "__main__":
+    print(get_monthly_transactions('2026-08'))
