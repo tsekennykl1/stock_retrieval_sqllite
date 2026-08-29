@@ -9,7 +9,7 @@ from crud_db import (
     insert_monthly_snapshot,
 )
 from services.price_service import fetch_current_prices_lambda, fetch_current_prices
-
+from services.monthly_report_service import get_monthly_performance, build_monthly_report
 
 class SnapshotService:
     """
@@ -118,13 +118,14 @@ class SnapshotService:
                 "quantity": quantity,
                 "price": current_price,
             })
-
+        monthly_report = build_monthly_report(year_month)
         result = {
             "status": "success",
             "year_month": year_month,
             "snapshot_date": snapshot_date,
             "total_inserted": len(inserted),
             "snapshots": inserted,
+            'monthly_preport': monthly_report
         }
 
         if skipped:
@@ -132,7 +133,7 @@ class SnapshotService:
 
         if self.debug_mode:
             result["debug_mode"] = True
-
+        print(get_monthly_performance(year_month,  print_table=False, current_prices=prices))
         return result
 
     # ──────────────────────────────────────────────────────────
