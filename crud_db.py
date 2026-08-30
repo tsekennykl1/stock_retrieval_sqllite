@@ -762,7 +762,8 @@ def delete_dividend(dividend_id):
 #  MONTHLY SNAPSHOTS CRUD
 # ══════════════════════════════════════════════════════════════
 
-def insert_monthly_snapshot(stock_symbol, start_quantity, start_price, year_month=None, snapshot_date=None):
+def insert_monthly_snapshot(stock_symbol, start_quantity, start_price, year_month=None, snapshot_date=None,
+                            monthly_realised_pnl=0, monthly_net_diff=0):
     """Insert or update a monthly starting position."""
     conn = get_connection()
     cursor = conn.cursor()
@@ -775,9 +776,12 @@ def insert_monthly_snapshot(stock_symbol, start_quantity, start_price, year_mont
     else: 
         snapshot_date, year_month = get_month_str(snapshot_date)
     cursor.execute("""
-        INSERT OR REPLACE INTO monthly_snapshots (year_month, stock_symbol, start_quantity, start_price, snapshot_date)
-        VALUES (?, ?, ?, ?, ?)
-    """, (year_month, stock_symbol.upper(), start_quantity, start_price, snapshot_date))
+        INSERT OR REPLACE INTO monthly_snapshots 
+            (year_month, stock_symbol, start_quantity, start_price, snapshot_date,
+             monthly_realised_pnl, monthly_net_diff)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (year_month, stock_symbol.upper(), start_quantity, start_price, snapshot_date,
+          monthly_realised_pnl, monthly_net_diff))
     conn.commit()
     conn.close()
 
@@ -788,7 +792,8 @@ def get_monthly_snapshots(year_month=None, stock_symbol=None, snapshot_date=None
     cursor = conn.cursor()
     
     query = """
-        SELECT id, snapshot_date, year_month, stock_symbol, start_quantity, start_price, start_value
+        SELECT id, snapshot_date, year_month, stock_symbol, start_quantity, start_price, start_value,
+               monthly_realised_pnl, monthly_net_diff
         FROM monthly_snapshots
         WHERE 1=1
     """
@@ -811,8 +816,8 @@ def get_monthly_snapshots(year_month=None, stock_symbol=None, snapshot_date=None
     conn.close()
     return normalize_rows([dict(row) for row in rows], ["snapshot_date"])
 
-
-def update_monthly_snapshot(year_month, stock_symbol, start_quantity=None, start_price=None, snapshot_date=None):
+def update_monthly_snapshot(year_month, stock_symbol, start_quantity=None, start_price=None, snapshot_date=None,
+                            monthly_realised_pnl=None, monthly_net_diff=None):
     """Update an existing monthly snapshot."""
     conn = get_connection()
     cursor = conn.cursor()
@@ -826,6 +831,12 @@ def update_monthly_snapshot(year_month, stock_symbol, start_quantity=None, start
     if snapshot_date is not None:
         fields.append("snapshot_date = ?")
         values.append(normalize_date(snapshot_date))
+    if monthly_realised_pnl is not None:
+        fields.append("monthly_realised_pnl = ?")
+        values.append(monthly_realised_pnl)
+    if monthly_net_diff is not None:
+        fields.append("monthly_net_diff = ?")
+        values.append(monthly_net_diff)
         
     if not fields:
         print("⚠️  No fields to update!")
@@ -843,7 +854,7 @@ def update_monthly_snapshot(year_month, stock_symbol, start_quantity=None, start
         print(f"✅ Snapshot for '{stock_symbol.upper()}' in '{year_month}' updated!")
     conn.commit()
     conn.close()
-
+    
 def delete_monthly_snapshot(year_month, stock_symbol):
     """Delete a monthly snapshot."""
     conn = get_connection()

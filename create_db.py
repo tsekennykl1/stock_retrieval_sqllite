@@ -96,6 +96,8 @@ def create_tables():
             start_quantity REAL NOT NULL,
             start_price REAL NOT NULL,
             start_value REAL GENERATED ALWAYS AS (start_quantity * start_price) VIRTUAL,
+            monthly_realised_pnl REAL DEFAULT 0,
+            monthly_net_diff REAL DEFAULT 0,
             FOREIGN KEY (stock_symbol) REFERENCES stocks(symbol) ON DELETE CASCADE,
             UNIQUE(year_month, stock_symbol)
         )
