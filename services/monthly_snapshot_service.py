@@ -74,8 +74,8 @@ class SnapshotService:
             print(f"🐛 [DEBUG] Snapshot for '{year_month}' already exists — overwriting (debug mode)")
 
         # Step 2: Build monthly report FIRST
-        # This fetches current prices, computes per-stock performance
-        # (realised PnL, net diff), and ensures portfolio holdings are up to date.
+        # This fetches current prices, updates portfolio holdings, and computes
+        # per-stock performance (realized_gl, month_net_diff).
         monthly_report = build_monthly_report(year_month)
 
         if self.debug_mode:
@@ -88,14 +88,19 @@ class SnapshotService:
                 "year_month": year_month,
             }
 
-        # Step 3: Extract per-stock performance data from the report
-        # Build a lookup: symbol → { monthly_realised_pnl, monthly_net_diff }
+        # Step 3: Extract per-stock performance from monthly_performance.performance
         stock_performance = self._extract_stock_performance(monthly_report)
 
-        if self.debug_mode:
-            print(f"🐛 [DEBUG] Stock performance lookup: {json.dumps(stock_performance, indent=2, default=str)}")
+        # Step 4: Extract per-stock current prices from market_data
+        price_lookup = self._extract_prices_from_report(monthly_report)
+        snapshot_date = self._extract_snapshot_date(monthly_report)
 
-        # Step 4: Get current portfolio holdings (quantity > 0)
+        if self.debug_mode:
+            print(f"🐛 [DEBUG] Stock performance: {json.dumps(stock_performance, indent=2, default=str)}")
+            print(f"🐛 [DEBUG] Price lookup: {json.dumps(price_lookup, indent=2, default=str)}")
+            print(f"🐛 [DEBUG] Snapshot date: {snapshot_date}")
+
+        # Step 5: Get current portfolio holdings (quantity > 0)
         holdings = get_latest_portfolio()
         if not holdings:
             return {
@@ -110,28 +115,30 @@ class SnapshotService:
         if self.debug_mode:
             print(f"🐛 [DEBUG] Portfolio symbols: {symbols}")
 
-        # Step 5: Fetch current stock prices (report already fetched them,
-        # but we still need the price dict for snapshot insertion)
-        prices = self._fetch_prices(symbols)
-        snapshot_date = prices.get("snapshot_date") or self.now.strftime("%Y-%m-%d")
+        # Step 6: If market_data prices are missing, fall back to external price fetch
+        missing_symbols = [s for s in symbols if s not in price_lookup or not price_lookup[s]]
+        if missing_symbols:
+            print(f"⚠️  Prices missing from report for: {missing_symbols}. Fetching externally...")
+            fallback_prices = self._fetch_prices(missing_symbols)
+            for s in missing_symbols:
+                price = self._extract_price(fallback_prices, s)
+                if price:
+                    price_lookup[s] = price
 
-        if self.debug_mode:
-            print(f"🐛 [DEBUG] Prices fetched: {json.dumps(prices, indent=2, default=str)}")
-
-        # Step 6: Insert snapshot for each holding (with realised PnL & net diff)
+        # Step 7: Insert snapshot for each holding (with realized_gl & month_net_diff)
         inserted = []
         skipped = []
         for holding in holdings:
             symbol = holding["stock_symbol"]
             quantity = float(holding["quantity"])
-            current_price = self._extract_price(prices, symbol)
+            current_price = price_lookup.get(symbol)
 
             if current_price is None or current_price <= 0:
                 print(f"⚠️  Skipping '{symbol}': no valid price returned.")
                 skipped.append({"symbol": symbol, "reason": "no valid price"})
                 continue
 
-            # Get per-stock PnL fields from the monthly report
+            # Get per-stock PnL fields from monthly_performance
             perf = stock_performance.get(symbol, {})
             monthly_realised_pnl = perf.get("monthly_realised_pnl", 0)
             monthly_net_diff = perf.get("monthly_net_diff", 0)
@@ -208,9 +215,106 @@ class SnapshotService:
         existing = get_monthly_snapshots(year_month=year_month)
         return len(existing) > 0
 
+    def _extract_stock_performance(self, monthly_report: dict) -> dict:
+        """
+        Extract per-stock realized_gl and month_net_diff from the monthly report.
+
+        Expected structure:
+            monthly_report["monthly_performance"]["performance"] = [
+                {
+                    "symbol": "0005.HK",
+                    "realized_gl": 0.0,
+                    "month_net_diff": -76160.0,
+                    ...
+                },
+                ...
+            ]
+
+        Returns:
+            dict keyed by symbol, e.g.:
+            {
+                "0005.HK": {"monthly_realised_pnl": 0.0, "monthly_net_diff": -76160.0},
+                "0981.HK": {"monthly_realised_pnl": 11250.0, "monthly_net_diff": 25050.0},
+            }
+        """
+        lookup = {}
+
+        monthly_perf = monthly_report.get("monthly_performance")
+        if not monthly_perf or not isinstance(monthly_perf, dict):
+            print("⚠️  No 'monthly_performance' found in report.")
+            return lookup
+
+        performance_list = monthly_perf.get("performance", [])
+        if not isinstance(performance_list, list):
+            print("⚠️  'monthly_performance.performance' is not a list.")
+            return lookup
+
+        for item in performance_list:
+            symbol = item.get("symbol", "")
+            if symbol:
+                lookup[symbol] = {
+                    "monthly_realised_pnl": float(item.get("realized_gl", 0)),
+                    "monthly_net_diff": float(item.get("month_net_diff", 0)),
+                }
+
+        return lookup
+
+    def _extract_prices_from_report(self, monthly_report: dict) -> dict:
+        """
+        Extract per-stock current prices from the monthly report.
+
+        Tries two sources (in order):
+          1. market_data[symbol]["price"]
+          2. portfolio_performance.holdings[].current_price
+
+        Returns:
+            dict keyed by symbol → float price, e.g.:
+            {"0005.HK": 162.9, "0700.HK": 457.0}
+        """
+        price_lookup = {}
+
+        # Source 1: market_data
+        market_data = monthly_report.get("market_data", {})
+        for symbol, info in market_data.items():
+            if isinstance(info, dict) and "price" in info:
+                try:
+                    price_lookup[symbol] = float(info["price"])
+                except (TypeError, ValueError):
+                    pass
+
+        # Source 2: portfolio_performance.holdings (fill gaps only)
+        portfolio_perf = monthly_report.get("portfolio_performance", {})
+        holdings = portfolio_perf.get("holdings", [])
+        if isinstance(holdings, list):
+            for h in holdings:
+                symbol = h.get("symbol", "")
+                if symbol and symbol not in price_lookup:
+                    try:
+                        price_lookup[symbol] = float(h["current_price"])
+                    except (TypeError, ValueError, KeyError):
+                        pass
+
+        return price_lookup
+
+    def _extract_snapshot_date(self, monthly_report: dict) -> str:
+        """
+        Extract the snapshot date from the report's market_data.retrieval_datetime.
+        Falls back to today's date.
+
+        Example: "2026-08-22 17:54" → "2026-08-22"
+        """
+        market_data = monthly_report.get("market_data", {})
+        retrieval = market_data.get("retrieval_datetime", "")
+
+        if retrieval and len(retrieval) >= 10:
+            return retrieval[:10]
+
+        return self.now.strftime("%Y-%m-%d")
+
     def _fetch_prices(self, symbols: list[str]) -> dict:
         """
         Fetch current prices using HTTP API first, fallback to Lambda invocation.
+        Only used when market_data in the report is incomplete.
         """
         try:
             prices = fetch_current_prices(symbols)
@@ -251,75 +355,6 @@ class SnapshotService:
             return float(info)
         except (TypeError, ValueError):
             return None
-
-    def _extract_stock_performance(self, monthly_report: dict) -> dict:
-        """
-        Extract per-stock monthly_realised_pnl and monthly_net_diff
-        from the build_monthly_report response.
-
-        Returns:
-            dict keyed by symbol, e.g.:
-            {
-                "0005.HK": {"monthly_realised_pnl": 500.0, "monthly_net_diff": 200.0},
-                "0011.HK": {"monthly_realised_pnl": 0, "monthly_net_diff": -100.0},
-            }
-
-        Adjust the field names below if your build_monthly_report
-        uses different keys (e.g. "realised_pnl", "net_diff", "pnl", etc.)
-        """
-        lookup = {}
-
-        # Try list-based structure: report["stocks"] or report["holdings"]
-        stock_list = (
-            monthly_report.get("stocks")
-            or monthly_report.get("holdings")
-            or monthly_report.get("performance")
-            or []
-        )
-
-        if isinstance(stock_list, list):
-            for item in stock_list:
-                symbol = (
-                    item.get("stock_symbol")
-                    or item.get("symbol")
-                    or ""
-                )
-                if symbol:
-                    lookup[symbol] = {
-                        "monthly_realised_pnl": float(
-                            item.get("monthly_realised_pnl")
-                            or item.get("realised_pnl")
-                            or item.get("realized_pnl")
-                            or 0
-                        ),
-                        "monthly_net_diff": float(
-                            item.get("monthly_net_diff")
-                            or item.get("net_diff")
-                            or item.get("unrealised_pnl")
-                            or 0
-                        ),
-                    }
-
-        elif isinstance(stock_list, dict):
-            # Dict-based structure: report["stocks"]["0005.HK"] = {...}
-            for symbol, item in stock_list.items():
-                if isinstance(item, dict):
-                    lookup[symbol] = {
-                        "monthly_realised_pnl": float(
-                            item.get("monthly_realised_pnl")
-                            or item.get("realised_pnl")
-                            or item.get("realized_pnl")
-                            or 0
-                        ),
-                        "monthly_net_diff": float(
-                            item.get("monthly_net_diff")
-                            or item.get("net_diff")
-                            or item.get("unrealised_pnl")
-                            or 0
-                        ),
-                    }
-
-        return lookup
 
 
 # ══════════════════════════════════════════════════════════════
