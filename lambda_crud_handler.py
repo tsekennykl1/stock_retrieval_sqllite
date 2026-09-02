@@ -1,7 +1,8 @@
 import json
 import os
-# REMOVED: from s3_db_sync import s3_db_wrapper
 from crud_db import (
+    # S3 sync
+    upload_db_to_s3,
     # Stocks
     get_stock, insert_stock, update_stock, delete_stock,
     # Portfolio
@@ -27,6 +28,34 @@ from services.transaction_service import process_transaction, process_transactio
 from services.monthly_snapshot_service import generate_monthly_snapshot
 
 LOCAL_DEV = os.environ.get("LOCAL_DEV") == "1"
+
+# Actions that modify the database → require S3 upload after execution
+WRITE_ACTIONS = {"insert", "update", "delete", "generate"}
+
+# Allowed CORS origins
+ALLOWED_ORIGINS = os.environ.get("CORS_ALLOWED_ORIGINS", "*")
+
+
+# ══════════════════════════════════════════════════════════════
+#  CORS HELPER
+# ══════════════════════════════════════════════════════════════
+
+def get_cors_headers(event=None):
+    """Return CORS headers. Supports wildcard or specific origin matching."""
+    origin = "*"
+    if event and ALLOWED_ORIGINS != "*":
+        request_origin = (event.get("headers") or {}).get("origin", "")
+        allowed_list = [o.strip() for o in ALLOWED_ORIGINS.split(",")]
+        if request_origin in allowed_list:
+            origin = request_origin
+
+    return {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "POST, GET, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Amz-Date, X-Api-Key, X-Amz-Security-Token",
+        "Access-Control-Max-Age": "86400",
+    }
 
 
 # ══════════════════════════════════════════════════════════════
@@ -80,7 +109,6 @@ ROUTE_MAP = {
         ),
         "required": ["symbol", "type", "quantity", "price"],
     },
-
     ("transaction", "update"): {
         "handler": lambda p: process_transaction_update(
             transaction_id=p["transaction_id"],
@@ -93,7 +121,6 @@ ROUTE_MAP = {
         ),
         "required": ["transaction_id"],
     },
-
     ("transaction", "delete"): {
         "handler": lambda p: delete_transaction(transaction_id=p["transaction_id"]),
         "required": ["transaction_id"],
@@ -395,6 +422,7 @@ def extract_route(event: dict, parsed_body: dict = None) -> tuple:
 
     return None, None
 
+
 # ══════════════════════════════════════════════════════════════
 #  LAMBDA HANDLER
 # ══════════════════════════════════════════════════════════════
@@ -409,11 +437,7 @@ def lambda_handler(event, context):
     if http_method.upper() == "OPTIONS":
         return {
             "statusCode": 200,
-            "headers": {
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "POST, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type",
-            },
+            "headers": get_cors_headers(event),
             "body": "",
         }
 
@@ -423,10 +447,11 @@ def lambda_handler(event, context):
 
         payload = parsed_body.get("payload") if isinstance(parsed_body.get("payload"), dict) else {}
         if not payload:
-            payload = {k: v for k, v in parsed_body.items() if k not in ("resource_name", "resource", "action", "operation", "payload")}
+            payload = {k: v for k, v in parsed_body.items()
+                       if k not in ("resource_name", "resource", "action", "operation", "payload")}
 
         if not resource or not action:
-            return _response(400, {"error": "Missing 'resource_name' and/or 'action' in the request."})
+            return _response(400, {"error": "Missing 'resource_name' and/or 'action' in the request."}, event)
 
         route_key = (resource, action)
         route = ROUTE_MAP.get(route_key)
@@ -437,25 +462,32 @@ def lambda_handler(event, context):
                 "error": f"Unknown route: resource='{resource}', action='{action}'",
                 "supported_resources": supported,
                 "hint": "Valid actions are typically: insert, update, delete, get"
-            })
+            }, event)
 
         missing = [f for f in route["required"] if f not in payload or payload[f] is None]
         if missing:
             return _response(400, {
                 "error": f"Missing required fields for {resource}/{action}",
                 "missing_fields": missing,
-            })
+            }, event)
 
         errors = validate_payload(resource, payload)
         if errors:
-            return _response(400, {"error": "Validation failed", "details": errors})
+            return _response(400, {"error": "Validation failed", "details": errors}, event)
 
         # ═══════════════════════════════════════════════════════
-        # CHANGED: Always call handler directly.
-        # DB is on EFS at /mnt/efs/mystocks.db (set via DB_PATH env var).
-        # No S3 download/upload needed.
+        #  Execute the handler
         # ═══════════════════════════════════════════════════════
         result = route["handler"](payload)
+
+        # ═══════════════════════════════════════════════════════
+        #  Upload DB to S3 after write operations
+        # ═══════════════════════════════════════════════════════
+        if action in WRITE_ACTIONS:
+            try:
+                upload_db_to_s3()
+            except Exception as s3_err:
+                print(f"⚠️  S3 upload failed (data saved locally): {s3_err}")
 
         response_body = {
             "message": f"{action.capitalize()} on '{resource}' completed successfully.",
@@ -472,24 +504,20 @@ def lambda_handler(event, context):
             else:
                 response_body["data"] = str(result)
 
-        return _response(200, response_body)
+        return _response(200, response_body, event)
 
     except Exception as e:
         print(f"❌ CRUD Lambda error: {e}")
         import traceback
         traceback.print_exc()
-        return _response(500, {"error": str(e)})
+        return _response(500, {"error": str(e)}, event)
 
-def _response(status_code: int, body: dict) -> dict:
-    """Standard API Gateway response."""
+
+def _response(status_code: int, body: dict, event: dict = None) -> dict:
+    """Standard API Gateway response with proper CORS headers."""
     return {
         "statusCode": status_code,
-        "headers": {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type",
-        },
+        "headers": get_cors_headers(event),
         "body": json.dumps(body, indent=2, default=str),
     }
 
@@ -503,14 +531,70 @@ if __name__ == "__main__":
     print("🚀 Running CRUD Lambda locally...\n")
 
     test_event_1 = {
-        "resource_name": "dividend",
-        "action": "get",
-        "payload": {'year_month': '2026-08'}
+        "resource_name": "transaction",
+        "action": "insert",
+        "payload": {
+            "symbol": "2318.HK",
+            "type": "SELL",
+            "quantity": 6000,
+            "price": 56.8,
+            "notes": "",
+            "transaction_date": "2026-09-01"
+        }
     }
     test_event_2 = {
-        "resource_name": "dividend",
-        "action": "get_all",
-        "payload": {'year_month': '2026-08'}
+        "resource_name": "transaction",
+        "action": "insert",
+        "payload": {
+            "symbol": "2628.HK",
+            "type": "SELL",
+            "quantity": 1000,
+            "price": 30.56,
+            "notes": "",
+            "transaction_date": "2026-09-02"
+        }
+    }
+
+    for i, evt in enumerate([test_event_1, test_event_2], 1):
+        print(f"\n{'=' * 60}")
+        print(f"  TEST {i}: {evt['resource_name']}/{evt['action']}")
+        print(f"{'=' * 60}")
+        resp = lambda_handler(evt, None)
+        print(f"Status: {resp['statusCode']}")
+        print(f"Body: {resp['body']}")
+
+
+# ══════════════════════════════════════════════════════════════
+#  LOCAL TESTING
+# ══════════════════════════════════════════════════════════════
+
+if __name__ == "__main__":
+    os.environ["LOCAL_DEV"] = "1"
+    print("🚀 Running CRUD Lambda locally...\n")
+
+    test_event_1 = {
+        "resource_name": "transaction",
+        "action": "insert",
+        "payload": {
+            "symbol": "2318.HK",
+            "type": "SELL",
+            "quantity": 6000,
+            "price": 56.8,
+            "notes": "",
+            "transaction_date": "2026-09-01"
+        }
+    }
+    test_event_2 = {
+        "resource_name": "transaction",
+        "action": "insert",
+        "payload": {
+            "symbol": "2628.HK",
+            "type": "SELL",
+            "quantity": 1000,
+            "price": 30.56,
+            "notes": "",
+            "transaction_date": "2026-09-02"
+        }
     }
 
     for i, evt in enumerate([test_event_1, test_event_2], 1):
