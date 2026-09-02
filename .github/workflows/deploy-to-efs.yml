@@ -304,6 +304,7 @@ jobs:
               "DB_PATH=/mnt/efs/mystocks.db" \
               "STOCK_RETRIEVAL_FUNCTION_NAME=yfinance-lambda" \
               "AWS_REGION=${AWS_REGION}" \
+              "ALLOWED_ORIGIN=https://staging.d37gylpwhasobk.amplifyapp.com" \
             --files \
               "lambda_consolidated_monthly_report.py" \
               "crud_db.py" \
