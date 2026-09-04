@@ -18,7 +18,8 @@ def retrieve_monthly_ledger(start_date):
             "date": normalize_date(entry['datetime']),
             "type": entry['type'],
             "amount": entry['amount'],
-            "description": entry['comment']
+            "category": entry.get("category"),   # ✅ category column
+            "comment": entry.get("comment"),     # ✅ comment column  
         } for entry in ledger], key=lambda x: x['date'])
         
         #calculate the total income and expenses for the month
