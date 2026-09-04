@@ -1144,7 +1144,7 @@ def delete_mortgage_monthly(year_month):
 # ══════════════════════════════════════════════════════════════
 
 def insert_ledger_entry(type, category, amount, ledger_datetime=None, comment=None):
-    """Insert a new ledger entry."""
+    """Insert a new ledger entry. Returns inserted record (including id)."""
     conn = get_connection()
     cursor = conn.cursor()
     ledger_datetime, month_str = get_month_str(ledger_datetime)
@@ -1154,8 +1154,34 @@ def insert_ledger_entry(type, category, amount, ledger_datetime=None, comment=No
         VALUES (?, ?, ?, ?, ?, ?)
         """, (ledger_datetime, month_str, type, category, amount, comment))
     conn.commit()
-    print(f"✅ Ledger entry '{category}' added!")
+
+    new_id = cursor.lastrowid
+    print(f"✅ Ledger entry '{category}' added! (ID: {new_id})")
+
     conn.close()
+    return {
+        "id": new_id,
+        "datetime": ledger_datetime,
+        "month_str": month_str,
+        "type": type,
+        "category": category,
+        "amount": amount,
+        "comment": comment,
+    }
+
+
+def get_ledger_entry_by_id(entry_id):
+    """Retrieve a single ledger entry by ID."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, datetime, month_str, type, category, amount, comment
+        FROM ledger
+        WHERE id = ?
+    """, (entry_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
 
 
 def get_ledger_entries(start_date=None, end_date=None, type=None, category=None, month_str=None):
@@ -1220,6 +1246,7 @@ def update_ledger_entry(entry_id, ledger_datetime=None, type=None, category=None
 
     if not fields:
         print("⚠️  No fields to update!")
+        conn.close()
         return
 
     values.append(entry_id)
@@ -1247,6 +1274,7 @@ def delete_ledger_entry(entry_id):
     else:
         print(f"🗑️  Ledger entry with ID '{entry_id}' deleted!")
     conn.close()
+
 
 #  SEED SAMPLE DATA & MAIN
 # ══════════════════════════════════════════════════════════════

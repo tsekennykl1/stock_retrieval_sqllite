@@ -21,7 +21,7 @@ from crud_db import (
     # Mortgage
     insert_mortgage_monthly, update_mortgage_monthly, delete_mortgage_monthly, get_mortgage_monthly,
     # Ledger
-    insert_ledger_entry, update_ledger_entry, delete_ledger_entry, get_ledger_entries,
+    insert_ledger_entry, update_ledger_entry, delete_ledger_entry, get_ledger_entries, get_ledger_entry_by_id,
 )
 from services.validation_service import validate_payload
 from services.transaction_service import process_transaction, process_transaction_update
@@ -145,19 +145,26 @@ ROUTE_MAP = {
         "required": ["type", "category", "amount"],
     },
     ("ledger", "update"): {
+        # accept either id or entry_id (backward compatible)
         "handler": lambda p: update_ledger_entry(
-            entry_id=p["entry_id"],
+            entry_id=p.get("id") if p.get("id") is not None else p.get("entry_id"),
             ledger_datetime=p.get("ledger_datetime"),
             type=p.get("type"),
             category=p.get("category"),
             amount=p.get("amount"),
             comment=p.get("comment"),
         ),
-        "required": ["entry_id"],
+        "required": [],  # validated in lambda_handler for id/entry_id
     },
     ("ledger", "delete"): {
-        "handler": lambda p: delete_ledger_entry(entry_id=p["entry_id"]),
-        "required": ["entry_id"],
+        "handler": lambda p: delete_ledger_entry(
+            entry_id=p.get("id") if p.get("id") is not None else p.get("entry_id")
+        ),
+        "required": [],  # validated in lambda_handler for id/entry_id
+    },
+    ("ledger", "get_by_id"): {
+        "handler": lambda p: get_ledger_entry_by_id(entry_id=p["id"]),
+        "required": ["id"],
     },
     ("ledger", "get"): {
         "handler": lambda p: get_ledger_entries(
@@ -379,12 +386,6 @@ ROUTE_MAP = {
 # ══════════════════════════════════════════════════════════════
 
 def extract_payload(event: dict) -> dict:
-    """
-    Extracts the request body/payload regardless of how the event arrives:
-      - Direct invocation (event IS the payload)
-      - API Gateway REST (body is JSON string)
-      - API Gateway HTTP API v2
-    """
     body = event.get("body")
     if body:
         try:
@@ -395,9 +396,6 @@ def extract_payload(event: dict) -> dict:
 
 
 def extract_route(event: dict, parsed_body: dict = None) -> tuple:
-    """
-    Extract (resource, action) from path parameters or from the payload.
-    """
     if parsed_body is None:
         parsed_body = {}
 
@@ -429,7 +427,6 @@ def extract_route(event: dict, parsed_body: dict = None) -> tuple:
 
 def lambda_handler(event, context):
 
-    # ─── Handle CORS preflight ─────────────────────────────
     http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
     if not http_method:
         http_method = event.get("httpMethod", "")
@@ -464,6 +461,14 @@ def lambda_handler(event, context):
                 "hint": "Valid actions are typically: insert, update, delete, get"
             }, event)
 
+        # Special-case ledger update/delete: allow either id or entry_id
+        if resource == "ledger" and action in ("update", "delete"):
+            if payload.get("id") is None and payload.get("entry_id") is None:
+                return _response(400, {
+                    "error": f"Missing required fields for {resource}/{action}",
+                    "missing_fields": ["id (or entry_id)"],
+                }, event)
+
         missing = [f for f in route["required"] if f not in payload or payload[f] is None]
         if missing:
             return _response(400, {
@@ -475,14 +480,8 @@ def lambda_handler(event, context):
         if errors:
             return _response(400, {"error": "Validation failed", "details": errors}, event)
 
-        # ═══════════════════════════════════════════════════════
-        #  Execute the handler
-        # ═══════════════════════════════════════════════════════
         result = route["handler"](payload)
 
-        # ═══════════════════════════════════════════════════════
-        #  Upload DB to S3 after write operations
-        # ═══════════════════════════════════════════════════════
         if action in WRITE_ACTIONS:
             try:
                 upload_db_to_s3()
@@ -514,7 +513,6 @@ def lambda_handler(event, context):
 
 
 def _response(status_code: int, body: dict, event: dict = None) -> dict:
-    """Standard API Gateway response with proper CORS headers."""
     return {
         "statusCode": status_code,
         "headers": get_cors_headers(event),
@@ -522,10 +520,6 @@ def _response(status_code: int, body: dict, event: dict = None) -> dict:
     }
 
 
-# ══════════════════════════════════════════════════════════════
-#  LOCAL TESTING
-# ══════════════════════════════════════════════════════════════
-
 if __name__ == "__main__":
     os.environ["LOCAL_DEV"] = "1"
     print("🚀 Running CRUD Lambda locally...\n")
@@ -542,65 +536,7 @@ if __name__ == "__main__":
             "transaction_date": "2026-09-01"
         }
     }
-    test_event_2 = {
-        "resource_name": "transaction",
-        "action": "insert",
-        "payload": {
-            "symbol": "2628.HK",
-            "type": "SELL",
-            "quantity": 1000,
-            "price": 30.56,
-            "notes": "",
-            "transaction_date": "2026-09-02"
-        }
-    }
 
-    for i, evt in enumerate([test_event_1, test_event_2], 1):
-        print(f"\n{'=' * 60}")
-        print(f"  TEST {i}: {evt['resource_name']}/{evt['action']}")
-        print(f"{'=' * 60}")
-        resp = lambda_handler(evt, None)
-        print(f"Status: {resp['statusCode']}")
-        print(f"Body: {resp['body']}")
-
-
-# ══════════════════════════════════════════════════════════════
-#  LOCAL TESTING
-# ══════════════════════════════════════════════════════════════
-
-if __name__ == "__main__":
-    os.environ["LOCAL_DEV"] = "1"
-    print("🚀 Running CRUD Lambda locally...\n")
-
-    test_event_1 = {
-        "resource_name": "transaction",
-        "action": "insert",
-        "payload": {
-            "symbol": "2318.HK",
-            "type": "SELL",
-            "quantity": 6000,
-            "price": 56.8,
-            "notes": "",
-            "transaction_date": "2026-09-01"
-        }
-    }
-    test_event_2 = {
-        "resource_name": "transaction",
-        "action": "insert",
-        "payload": {
-            "symbol": "2628.HK",
-            "type": "SELL",
-            "quantity": 1000,
-            "price": 30.56,
-            "notes": "",
-            "transaction_date": "2026-09-02"
-        }
-    }
-
-    for i, evt in enumerate([test_event_1, test_event_2], 1):
-        print(f"\n{'='*60}")
-        print(f"  TEST {i}: {evt['resource_name']}/{evt['action']}")
-        print(f"{'='*60}")
-        resp = lambda_handler(evt, None)
-        print(f"Status: {resp['statusCode']}")
-        print(f"Body: {resp['body']}")
+    resp = lambda_handler(test_event_1, None)
+    print(f"Status: {resp['statusCode']}")
+    print(f"Body: {resp['body']}")
