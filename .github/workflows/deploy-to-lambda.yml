@@ -80,7 +80,6 @@ jobs:
       # ── Deploy Lambdas ─────────────────────────────────────────────────────
       - name: Deploy Lambda functions
         env:
-          AWS_REGION:             ${{ secrets.AWS_REGION }}
           S3_BUCKET_NAME:         ${{ secrets.S3_BUCKET_NAME }}
           LAMBDA_ROLE_ARN:        ${{ secrets.LAMBDA_ROLE_ARN }}
           LAMBDA_PY_RUNTIME:      python3.13
@@ -221,7 +220,6 @@ jobs:
               "S3_DB_KEY=mystocks.db" \
               "FORCE_DB_OVERWRITE=true" \
               "STOCK_RETRIEVAL_FUNCTION_NAME=yfinance-lambda" \
-              "AWS_REGION=${AWS_REGION}" \
               "ALLOWED_ORIGIN=https://staging.d37gylpwhasobk.amplifyapp.com" \
             --files \
               "lambda_consolidated_monthly_report.py" \
