@@ -1,4 +1,4 @@
-name: Deploy Lambdas to EFS
+name: Deploy Lambdas (S3 DB Sync)
 
 on:
   push:
@@ -6,14 +6,13 @@ on:
   workflow_dispatch:
     inputs:
       sync_db:
-        description: "Sync mystocks.db to EFS?"
+        description: "Sync mystocks.db to S3?"
         type: choice
         required: true
         default: "no"
         options:
           - "no"
           - "from_github"
-          - "from_s3"
 
 concurrency:
   group: deploy-lambdas-main
@@ -84,31 +83,12 @@ jobs:
           AWS_REGION:             ${{ secrets.AWS_REGION }}
           S3_BUCKET_NAME:         ${{ secrets.S3_BUCKET_NAME }}
           LAMBDA_ROLE_ARN:        ${{ secrets.LAMBDA_ROLE_ARN }}
-          VPC_SUBNET_IDS:         ${{ secrets.VPC_SUBNET_IDS }}
-          VPC_SECURITY_GROUP_ID:  ${{ secrets.VPC_SECURITY_GROUP_ID }}
-          EFS_ACCESS_POINT_ARN:   ${{ secrets.EFS_ACCESS_POINT_ARN }}
           LAMBDA_PY_RUNTIME:      python3.13
         shell: bash
         run: |
           set -euo pipefail
 
           mkdir -p build
-
-          json_escape () {
-            python3 - <<'PY'
-          import json,sys
-          print(json.dumps(sys.stdin.read().rstrip("\n"))[1:-1])
-          PY
-          }
-
-          to_json_array_from_csv () {
-            python3 - <<'PY'
-          import os,json
-          csv = os.environ["CSV"]
-          items = [x.strip() for x in csv.split(",") if x.strip()]
-          print(json.dumps(items))
-          PY
-          }
 
           build_zip () {
             local function_name="$1"
@@ -138,7 +118,7 @@ jobs:
             local function_name="$1"
             shift
 
-            python3 - <<PY >"/tmp/${function_name}_env.json"
+            python3 - "$@" <<'PY' >"/tmp/${function_name}_env.json"
           import json,sys
           vars={}
           for pair in sys.argv[1:]:
@@ -149,63 +129,10 @@ jobs:
             echo "🔧 Env JSON written: /tmp/${function_name}_env.json"
           }
 
-          write_vpc_json () {
-            local function_name="$1"
-
-            if [ -z "${VPC_SUBNET_IDS:-}" ] || [ -z "${VPC_SECURITY_GROUP_ID:-}" ]; then
-              echo "❌ VPC_SUBNET_IDS / VPC_SECURITY_GROUP_ID not set"
-              exit 1
-            fi
-
-            python3 - <<PY >"/tmp/${function_name}_vpc.json"
-          import json, os, re, sys
-
-          raw_subnets = os.environ["VPC_SUBNET_IDS"]
-          sg_id = os.environ["VPC_SECURITY_GROUP_ID"].strip()
-
-          subnet_ids = [s.strip() for s in raw_subnets.split(",") if s.strip()]
-
-          if not subnet_ids:
-              print("No subnet IDs provided", file=sys.stderr)
-              sys.exit(1)
-
-          for subnet in subnet_ids:
-              if not re.match(r"^subnet-[0-9a-fA-F]+$", subnet):
-                  print(f"Invalid subnet ID: {subnet}", file=sys.stderr)
-                  sys.exit(1)
-
-          if not re.match(r"^sg-[0-9a-fA-F]+$", sg_id):
-              print(f"Invalid security group ID: {sg_id}", file=sys.stderr)
-              sys.exit(1)
-
-          print(json.dumps({
-              "SubnetIds": subnet_ids,
-              "SecurityGroupIds": [sg_id]
-          }))
-          PY
-          }
-
-          write_efs_json () {
-            local function_name="$1"
-
-            if [ -z "${EFS_ACCESS_POINT_ARN:-}" ]; then
-              echo "❌ EFS_ACCESS_POINT_ARN not set"
-              exit 1
-            fi
-
-            python3 - <<PY >"/tmp/${function_name}_efs.json"
-          import json,os
-          arn = os.environ["EFS_ACCESS_POINT_ARN"]
-          print(json.dumps([{"Arn": arn, "LocalMountPath": "/mnt/efs"}]))
-          PY
-          }
-
           deploy_lambda () {
             local function_name="$1"
             local handler="${function_name}.lambda_handler"
-
-            local runtime="${LAMBDA_PY_RUNTIME:-python3.11}"
-
+            local runtime="${LAMBDA_PY_RUNTIME:-python3.13}"
             local timeout="${2:-60}"
             local memory="${3:-256}"
             shift 3
@@ -235,8 +162,6 @@ jobs:
 
             build_zip "${function_name}" "${files[@]}"
             write_env_json "${function_name}" "${env_pairs[@]}"
-            write_vpc_json "${function_name}"
-            write_efs_json "${function_name}"
 
             if aws lambda get-function --function-name "${function_name}" >/dev/null 2>&1; then
               echo "🔄 Function exists — updating code..."
@@ -246,7 +171,7 @@ jobs:
 
               aws lambda wait function-updated --function-name "${function_name}"
 
-              echo "🔧 Updating configuration..."
+              echo "🔧 Updating configuration (clearing VPC/EFS)..."
               aws lambda update-function-configuration \
                 --function-name "${function_name}" \
                 --runtime "${runtime}" \
@@ -255,8 +180,8 @@ jobs:
                 --timeout "${timeout}" \
                 --memory-size "${memory}" \
                 --environment "file:///tmp/${function_name}_env.json" \
-                --vpc-config "file:///tmp/${function_name}_vpc.json" \
-                --file-system-configs "file:///tmp/${function_name}_efs.json" >/dev/null
+                --vpc-config "SubnetIds=[],SecurityGroupIds=[]" \
+                --file-system-configs "[]" >/dev/null
 
               aws lambda wait function-updated --function-name "${function_name}"
 
@@ -270,9 +195,7 @@ jobs:
                 --zip-file "fileb://${function_name}.zip" \
                 --timeout "${timeout}" \
                 --memory-size "${memory}" \
-                --environment "file:///tmp/${function_name}_env.json" \
-                --vpc-config "file:///tmp/${function_name}_vpc.json" \
-                --file-system-configs "file:///tmp/${function_name}_efs.json" >/dev/null
+                --environment "file:///tmp/${function_name}_env.json" >/dev/null
 
               aws lambda wait function-active --function-name "${function_name}"
             fi
@@ -280,28 +203,23 @@ jobs:
             echo "✅ Done: ${function_name}"
           }
 
-          # ── lambda_s3_to_efs (the DB sync utility) ─────────────────────────
-          deploy_lambda "lambda_s3_to_efs" 60 256 \
-            --env \
-              "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
-              "EFS_PATH=/mnt/efs" \
-            --files \
-              "lambda_s3_to_efs.py" \
-              "s3_db_sync.py"
-
-          # ── lambda_crud_handler (reads/writes EFS directly) ────────────────
+          # ── lambda_crud_handler (S3 ↔ /tmp sync) ──────────────────────────
           deploy_lambda "lambda_crud_handler" 60 256 \
             --env \
-              "DB_PATH=/mnt/efs/mystocks.db" \
+              "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
+              "S3_DB_KEY=mystocks.db" \
+              "FORCE_DB_OVERWRITE=true" \
             --files \
               "lambda_crud_handler.py" \
               "crud_db.py" \
               "services"
 
-          # ── lambda_consolidated_monthly_report (reads EFS directly) ────────
+          # ── lambda_consolidated_monthly_report ─────────────────────────────
           deploy_lambda "lambda_consolidated_monthly_report" 60 256 \
             --env \
-              "DB_PATH=/mnt/efs/mystocks.db" \
+              "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
+              "S3_DB_KEY=mystocks.db" \
+              "FORCE_DB_OVERWRITE=true" \
               "STOCK_RETRIEVAL_FUNCTION_NAME=yfinance-lambda" \
               "AWS_REGION=${AWS_REGION}" \
               "ALLOWED_ORIGIN=https://staging.d37gylpwhasobk.amplifyapp.com" \
@@ -309,4 +227,3 @@ jobs:
               "lambda_consolidated_monthly_report.py" \
               "crud_db.py" \
               "services"
-
