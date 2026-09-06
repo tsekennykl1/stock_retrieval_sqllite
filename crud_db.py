@@ -1007,6 +1007,21 @@ def update_monthly_pnl(year_month, open_bal=None, income=None, expenses=None, mo
     conn.close()
 
 
+def delete_monthly_pnl(year_month):
+    """Delete a monthly PnL entry."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        DELETE FROM monthly_pnl
+        WHERE year_month = ?
+    """, (year_month,))
+    conn.commit()
+    if cursor.rowcount == 0:
+        print(f"⚠️  PnL entry for '{year_month}' not found!")
+    else:
+        print(f"🗑️  PnL entry for '{year_month}' deleted!")
+    conn.close()
+
 
 # ══════════════════════════════════════════════════════════════
 #  MORTGAGE CRUD
@@ -1262,7 +1277,6 @@ def delete_ledger_entry(entry_id):
     else:
         print(f"🗑️  Ledger entry with ID '{entry_id}' deleted!")
     conn.close()
-
 
 #  SEED SAMPLE DATA & MAIN
 # ══════════════════════════════════════════════════════════════

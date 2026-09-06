@@ -1,5 +1,6 @@
 import json
 import os
+import base64
 from crud_db import (
     # S3 sync
     upload_db_to_s3,
@@ -31,31 +32,6 @@ LOCAL_DEV = os.environ.get("LOCAL_DEV") == "1"
 
 # Actions that modify the database → require S3 upload after execution
 WRITE_ACTIONS = {"insert", "update", "delete", "generate"}
-
-# Allowed CORS origins
-ALLOWED_ORIGINS = os.environ.get("CORS_ALLOWED_ORIGINS", "*")
-
-
-# ══════════════════════════════════════════════════════════════
-#  CORS HELPER
-# ══════════════════════════════════════════════════════════════
-
-def get_cors_headers(event=None):
-    """Return CORS headers. Supports wildcard or specific origin matching."""
-    origin = "*"
-    if event and ALLOWED_ORIGINS != "*":
-        request_origin = (event.get("headers") or {}).get("origin", "")
-        allowed_list = [o.strip() for o in ALLOWED_ORIGINS.split(",")]
-        if request_origin in allowed_list:
-            origin = request_origin
-
-    return {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": origin,
-        "Access-Control-Allow-Methods": "POST, GET, PUT, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Amz-Date, X-Api-Key, X-Amz-Security-Token",
-        "Access-Control-Max-Age": "86400",
-    }
 
 
 # ══════════════════════════════════════════════════════════════
@@ -183,12 +159,13 @@ ROUTE_MAP = {
             open_bal=p["open_bal"],
             income=p["income"],
             expenses=p["expenses"],
+            mortgage=p["mortgage"],
             stock_pnl=p["stock_pnl"],
             dividend=p["dividend"],
             year_month=p.get("year_month"),
             pnl_date=p.get("pnl_date"),
         ),
-        "required": ["open_bal", "income", "expenses", "stock_pnl", "dividend"],
+        "required": ["open_bal", "income", "expenses", "mortgage", "stock_pnl", "dividend"],
     },
     ("monthly_pnl", "update"): {
         "handler": lambda p: update_monthly_pnl(
@@ -196,6 +173,7 @@ ROUTE_MAP = {
             open_bal=p.get("open_bal"),
             income=p.get("income"),
             expenses=p.get("expenses"),
+            mortgage=p.get("mortgage"),
             stock_pnl=p.get("stock_pnl"),
             dividend=p.get("dividend"),
             pnl_date=p.get("pnl_date"),
@@ -387,6 +365,14 @@ ROUTE_MAP = {
 
 def extract_payload(event: dict) -> dict:
     body = event.get("body")
+
+    # ── HTTP API v2 Payload Format 2.0 may base64-encode the body ──
+    if body and event.get("isBase64Encoded"):
+        try:
+            body = base64.b64decode(body).decode("utf-8")
+        except Exception:
+            return {}
+
     if body:
         try:
             return json.loads(body) if isinstance(body, str) else body
@@ -426,15 +412,23 @@ def extract_route(event: dict, parsed_body: dict = None) -> tuple:
 # ══════════════════════════════════════════════════════════════
 
 def lambda_handler(event, context):
+    """
+    HTTP API v2 with gateway-level CORS handles OPTIONS preflight
+    and injects CORS headers automatically. The Lambda must NOT
+    return its own CORS headers or browsers will see duplicates
+    (e.g. two different Access-Control-Allow-Origin values) and
+    reject the response.
+    """
 
     http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
     if not http_method:
         http_method = event.get("httpMethod", "")
 
+    # Safety net — gateway normally intercepts OPTIONS before it reaches here
     if http_method.upper() == "OPTIONS":
         return {
             "statusCode": 200,
-            "headers": get_cors_headers(event),
+            "headers": {"Content-Type": "application/json"},
             "body": "",
         }
 
@@ -448,7 +442,7 @@ def lambda_handler(event, context):
                        if k not in ("resource_name", "resource", "action", "operation", "payload")}
 
         if not resource or not action:
-            return _response(400, {"error": "Missing 'resource_name' and/or 'action' in the request."}, event)
+            return _response(400, {"error": "Missing 'resource_name' and/or 'action' in the request."})
 
         route_key = (resource, action)
         route = ROUTE_MAP.get(route_key)
@@ -459,7 +453,7 @@ def lambda_handler(event, context):
                 "error": f"Unknown route: resource='{resource}', action='{action}'",
                 "supported_resources": supported,
                 "hint": "Valid actions are typically: insert, update, delete, get"
-            }, event)
+            })
 
         # Special-case ledger update/delete: allow either id or entry_id
         if resource == "ledger" and action in ("update", "delete"):
@@ -467,18 +461,18 @@ def lambda_handler(event, context):
                 return _response(400, {
                     "error": f"Missing required fields for {resource}/{action}",
                     "missing_fields": ["id (or entry_id)"],
-                }, event)
+                })
 
         missing = [f for f in route["required"] if f not in payload or payload[f] is None]
         if missing:
             return _response(400, {
                 "error": f"Missing required fields for {resource}/{action}",
                 "missing_fields": missing,
-            }, event)
+            })
 
         errors = validate_payload(resource, payload)
         if errors:
-            return _response(400, {"error": "Validation failed", "details": errors}, event)
+            return _response(400, {"error": "Validation failed", "details": errors})
 
         result = route["handler"](payload)
 
@@ -503,19 +497,29 @@ def lambda_handler(event, context):
             else:
                 response_body["data"] = str(result)
 
-        return _response(200, response_body, event)
+        return _response(200, response_body)
 
     except Exception as e:
         print(f"❌ CRUD Lambda error: {e}")
         import traceback
         traceback.print_exc()
-        return _response(500, {"error": str(e)}, event)
+        return _response(500, {"error": str(e)})
 
 
-def _response(status_code: int, body: dict, event: dict = None) -> dict:
+# ══════════════════════════════════════════════════════════════
+#  RESPONSE HELPER
+# ══════════════════════════════════════════════════════════════
+
+def _response(status_code: int, body: dict) -> dict:
+    """
+    HTTP API v2 with gateway-level CORS injects Access-Control-*
+    headers automatically. Only Content-Type is needed from Lambda.
+    """
     return {
         "statusCode": status_code,
-        "headers": get_cors_headers(event),
+        "headers": {
+            "Content-Type": "application/json",
+        },
         "body": json.dumps(body, indent=2, default=str),
     }
 
