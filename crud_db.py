@@ -908,11 +908,12 @@ def delete_monthly_snapshot(year_month, stock_symbol):
     conn.close()
 
 
+
 # ══════════════════════════════════════════════════════════════
 #  MONTHLY PNL CRUD
 # ══════════════════════════════════════════════════════════════
 
-def insert_monthly_pnl(open_bal, income, expenses, stock_pnl, dividend, year_month=None, pnl_date=None):
+def insert_monthly_pnl(open_bal, income, expenses, mortgage, stock_pnl, dividend, year_month=None, pnl_date=None):
     """Insert or update a monthly PnL entry."""
     conn = get_connection()
     cursor = conn.cursor()
@@ -920,16 +921,15 @@ def insert_monthly_pnl(open_bal, income, expenses, stock_pnl, dividend, year_mon
         if year_month:
             pnl_date = convertYearMonth(year_month)
         else:
-            pnl_date = datetime.now().strftime("%Y-%m-%d")
-            year_month = datetime.now().strftime("%Y-%m")
+            pnl_date, year_month = get_month_str()
     else:
         pnl_date, year_month = get_month_str(pnl_date)
     cursor.execute("""
         INSERT OR REPLACE INTO monthly_pnl (
-            year_month, open_bal, income, expenses, stock_pnl, dividend, pnl_date
+            year_month, open_bal, income, expenses, mortgage, stock_pnl, dividend, pnl_date
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (year_month, open_bal, income, expenses, stock_pnl, dividend, pnl_date))
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (year_month, open_bal, income, expenses, mortgage, stock_pnl, dividend, pnl_date))
     conn.commit()
     conn.close()
 
@@ -940,7 +940,7 @@ def get_monthly_pnl(year_month=None, pnl_date=None):
     cursor = conn.cursor()
 
     query = """
-        SELECT pnl_date, year_month, open_bal, income, expenses, stock_pnl, dividend, monthly_gl, close_bal
+        SELECT pnl_date, year_month, open_bal, income, expenses, mortgage, stock_pnl, dividend, monthly_gl, close_bal
         FROM monthly_pnl
         WHERE 1=1
     """
@@ -961,7 +961,7 @@ def get_monthly_pnl(year_month=None, pnl_date=None):
     return normalize_rows([dict(row) for row in rows], ["pnl_date"])
 
 
-def update_monthly_pnl(year_month, open_bal=None, income=None, expenses=None, stock_pnl=None, dividend=None,
+def update_monthly_pnl(year_month, open_bal=None, income=None, expenses=None, mortgage=None, stock_pnl=None, dividend=None,
                         pnl_date=None):
     """Update an existing monthly PnL entry."""
     conn = get_connection()
@@ -976,6 +976,9 @@ def update_monthly_pnl(year_month, open_bal=None, income=None, expenses=None, st
     if expenses is not None:
         fields.append("expenses = ?")
         values.append(expenses)
+    if mortgage is not None:
+        fields.append("mortgage = ?")
+        values.append(mortgage)
     if stock_pnl is not None:
         fields.append("stock_pnl = ?")
         values.append(stock_pnl)
@@ -1003,21 +1006,6 @@ def update_monthly_pnl(year_month, open_bal=None, income=None, expenses=None, st
     conn.commit()
     conn.close()
 
-
-def delete_monthly_pnl(year_month):
-    """Delete a monthly PnL entry."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        DELETE FROM monthly_pnl
-        WHERE year_month = ?
-    """, (year_month,))
-    conn.commit()
-    if cursor.rowcount == 0:
-        print(f"⚠️  PnL entry for '{year_month}' not found!")
-    else:
-        print(f"🗑️  PnL entry for '{year_month}' deleted!")
-    conn.close()
 
 
 # ══════════════════════════════════════════════════════════════

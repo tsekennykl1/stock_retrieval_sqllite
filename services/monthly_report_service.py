@@ -7,6 +7,9 @@ from services.monthly_dividend_service import calculate_monthly_dividends, calcu
 from services.portfolio_service import get_portfolio_holdings_json
 from services.price_service import fetch_current_prices, fetch_current_prices_lambda 
 from services.transaction_service import get_monthly_transactions
+import os
+from services.monthly_mortgage_service import calculate_monthly_mortgage
+
 
 def get_monthly_performance(year_month,  print_table=False, current_prices=None,):
     """Calculate performance against the monthly snapshot, factoring in transactions.
@@ -186,6 +189,11 @@ def build_monthly_report(year_month: str) -> dict:
     income = float(ledger.get("Income_total", -0.01) or -0.01)
     expenses = float(ledger.get("Expenses_total", -0.01) or -0.01)
     
+    # Determine mortgage amount
+    mortgage_amount = float(os.environ.get("MORTGAGE", -0.1))
+    if not mortgage_amount or mortgage_amount < 0:
+        mortgage_entry = calculate_monthly_mortgage(year_month=year_month)
+        mortgage_amount = float(mortgage_entry.get("Total_payment", 0.0))*-1
     # Dividends — use calculate_all_dividends_from to get both current month and all future receivable
     dividend_data = calculate_all_dividends_from(year_month)
     # total_dividend: only the specified year_month's dividends (for PnL calculation)
@@ -205,6 +213,7 @@ def build_monthly_report(year_month: str) -> dict:
         open_bal=open_bal,
         income=income,
         expenses=expenses,
+        mortgage=mortgage_amount, 
         stock_pnl=stock_pnl,
         dividend=dividends_total,
     )
@@ -217,6 +226,7 @@ def build_monthly_report(year_month: str) -> dict:
         "open_bal": float(row["open_bal"]),
         "income": float(row["income"]),
         "expenses": float(row["expenses"]),
+        "mortgage": float(row.get("mortgage", 0.0) or 0.0),  # ✅ Mapping mortgage here
         "stock_pnl": float(row["stock_pnl"]),
         "dividend": float(row["dividend"]),
         "monthly_gl": float(row["monthly_gl"]),
