@@ -10,6 +10,69 @@ from services.transaction_service import get_monthly_transactions
 import os
 from services.monthly_mortgage_service import calculate_monthly_mortgage
 
+# ── Constants ──────────────────────────────────────────────────
+SUMMARY_START = "2025-01"
+
+
+# ══════════════════════════════════════════════════════════════
+#  GENERIC PERIOD PnL SUMMARY (quarterly / annual / any bucket)
+# ══════════════════════════════════════════════════════════════
+
+def _to_quarter_key(year_month: str) -> str:
+    """'2025-03' → '2025-Q1'"""
+    year, month = year_month.split("-")
+    quarter = (int(month) - 1) // 3 + 1
+    return f"{year}-Q{quarter}"
+
+
+def _to_year_key(year_month: str) -> str:
+    """'2025-03' → '2025'"""
+    return year_month[:4]
+
+
+def build_period_summary(all_monthly_pnl: list, period_type: str, key_extractor) -> list:
+    """
+    Generic aggregation: groups monthly PnL records by a key derived from
+    year_month, sums stock_pnl, dividend, and monthly_gl, and returns sorted
+    summaries.
+
+    Args:
+        all_monthly_pnl:  the full list of monthly PnL dicts
+        period_type:      "QUARTERLY" or "ANNUAL" — stamped on each result
+        key_extractor:    callable that converts a year_month string
+                          (e.g. "2025-03") to a bucket key
+                          (e.g. "2025-Q1" for quarterly, "2025" for annual)
+
+    Returns:
+        sorted list of dicts with keys: type, period, stock_pnl, dividend, monthly_gl
+    """
+    buckets: dict[str, list] = {}
+
+    for pnl in all_monthly_pnl:
+        ym = pnl.get("year_month", "")
+        if not ym or ym < SUMMARY_START:
+            continue
+
+        bucket_key = key_extractor(ym)
+        if bucket_key not in buckets:
+            buckets[bucket_key] = [0.0, 0.0, 0.0]  # [stock_pnl, dividend, monthly_gl]
+
+        sums = buckets[bucket_key]
+        sums[0] += float(pnl.get("stock_pnl", 0.0) or 0.0)
+        sums[1] += float(pnl.get("dividend", 0.0) or 0.0)
+        sums[2] += float(pnl.get("monthly_gl", 0.0) or 0.0)
+
+    return [
+        {
+            "type": period_type,
+            "period": key,
+            "stock_pnl": round(sums[0], 2),
+            "dividend": round(sums[1], 2),
+            "monthly_gl": round(sums[2], 2),
+        }
+        for key, sums in sorted(buckets.items())
+    ]
+
 
 def get_monthly_performance(year_month,  print_table=False, current_prices=None,):
     """Calculate performance against the monthly snapshot, factoring in transactions.
@@ -226,12 +289,16 @@ def build_monthly_report(year_month: str) -> dict:
         "open_bal": float(row["open_bal"]),
         "income": float(row["income"]),
         "expenses": float(row["expenses"]),
-        "mortgage": float(row.get("mortgage", 0.0) or 0.0),  # ✅ Mapping mortgage here
+        "mortgage": float(row.get("mortgage", 0.0) or 0.0),
         "stock_pnl": float(row["stock_pnl"]),
         "dividend": float(row["dividend"]),
         "monthly_gl": float(row["monthly_gl"]),
         "close_bal": float(row["close_bal"])
     } for row in all_pnl], key=lambda x: x['pnl_date'], reverse=True)
+
+    # ── Quarterly & Annual PnL summaries (2025 onward) ─────────
+    quarterly_pnl_summary = build_period_summary(all_pnl, "QUARTERLY", _to_quarter_key)
+    annual_pnl_summary    = build_period_summary(all_pnl, "ANNUAL",    _to_year_key)
     
     return {
         "year_month": year_month,
@@ -243,6 +310,8 @@ def build_monthly_report(year_month: str) -> dict:
         "monthly_ledger": ledger,
         "dividends": dividend_data,
         "all_monthly_pnl": all_pnl,
+        "quarterly_pnl_summary": quarterly_pnl_summary,
+        "annual_pnl_summary": annual_pnl_summary,
     }
 
 if __name__ == "__main__":

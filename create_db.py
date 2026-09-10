@@ -114,7 +114,7 @@ def create_tables():
             mortgage REAL DEFAULT 0,
             stock_pnl REAL DEFAULT 0,
             dividend REAL DEFAULT 0,
-            monthly_gl REAL GENERATED ALWAYS AS (income + expenses + stock_pnl + dividend) VIRTUAL,
+            monthly_gl REAL GENERATED ALWAYS AS (income + expenses + mortgage+ stock_pnl + dividend) VIRTUAL,
             close_bal REAL GENERATED ALWAYS AS (open_bal + monthly_gl) VIRTUAL
         )
     """)
