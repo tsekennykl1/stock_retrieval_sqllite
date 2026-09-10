@@ -13,6 +13,13 @@ from services.monthly_mortgage_service import calculate_monthly_mortgage
 # ── Constants ──────────────────────────────────────────────────
 SUMMARY_START = "2025-01"
 
+# ── Special Costs — one-time adjustments deducted from period G/L ──
+# Key = quarter key (e.g. "2025-Q2"), Value = amount (negative)
+QUARTERLY_SPECIAL_COSTS: dict[str, float] = {
+    "2025-Q2": -109400.0,
+    "2025-Q3": -3134000.0,
+}
+
 
 # ══════════════════════════════════════════════════════════════
 #  GENERIC PERIOD PnL SUMMARY (quarterly / annual / any bucket)
@@ -30,11 +37,34 @@ def _to_year_key(year_month: str) -> str:
     return year_month[:4]
 
 
+def _get_special_cost(period_type: str, period_key: str) -> float:
+    """
+    Returns the special cost adjustment for the given period.
+
+    - QUARTERLY: direct lookup from QUARTERLY_SPECIAL_COSTS
+    - ANNUAL:    sum of all quarterly special costs belonging to that year
+
+    Returns the special cost (negative = deduction), or 0.0 if none.
+    """
+    if period_type == "QUARTERLY":
+        return QUARTERLY_SPECIAL_COSTS.get(period_key, 0.0)
+
+    if period_type == "ANNUAL":
+        # period_key is just the year, e.g. "2025"
+        return sum(
+            cost for qk, cost in QUARTERLY_SPECIAL_COSTS.items()
+            if qk.startswith(f"{period_key}-")
+        )
+
+    return 0.0
+
+
 def build_period_summary(all_monthly_pnl: list, period_type: str, key_extractor) -> list:
     """
     Generic aggregation: groups monthly PnL records by a key derived from
-    year_month, sums stock_pnl, dividend, and monthly_gl, and returns sorted
-    summaries.
+    year_month, sums stock_pnl, dividend, and monthly_gl, applies special
+    cost deductions, and returns sorted summaries with
+    period_gl = monthly_gl + special_cost.
 
     Args:
         all_monthly_pnl:  the full list of monthly PnL dicts
@@ -44,7 +74,8 @@ def build_period_summary(all_monthly_pnl: list, period_type: str, key_extractor)
                           (e.g. "2025-Q1" for quarterly, "2025" for annual)
 
     Returns:
-        sorted list of dicts with keys: type, period, stock_pnl, dividend, monthly_gl
+        sorted list of dicts with keys:
+        type, period, stock_pnl, dividend, special_cost, period_gl
     """
     buckets: dict[str, list] = {}
 
@@ -62,16 +93,20 @@ def build_period_summary(all_monthly_pnl: list, period_type: str, key_extractor)
         sums[1] += float(pnl.get("dividend", 0.0) or 0.0)
         sums[2] += float(pnl.get("monthly_gl", 0.0) or 0.0)
 
-    return [
-        {
+    result = []
+    for key, sums in sorted(buckets.items()):
+        special_cost = _get_special_cost(period_type, key)
+        period_gl = sums[2] + special_cost
+        result.append({
             "type": period_type,
             "period": key,
             "stock_pnl": round(sums[0], 2),
             "dividend": round(sums[1], 2),
-            "monthly_gl": round(sums[2], 2),
-        }
-        for key, sums in sorted(buckets.items())
-    ]
+            "special_cost": round(special_cost, 2),
+            "period_gl": round(period_gl, 2),
+        })
+
+    return result
 
 
 def get_monthly_performance(year_month,  print_table=False, current_prices=None,):
